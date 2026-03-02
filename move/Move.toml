@@ -1,0 +1,9 @@
+[package]
+name = "sui_immunizer"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+
+[addresses]
+immunizer = "0x0"
