@@ -17,6 +17,7 @@
 
 import { SealClient, SessionKey } from '@mysten/seal';
 import { Transaction } from '@mysten/sui/transactions';
+import { fromHex } from '@mysten/bcs';
 
 export type { SessionKey };
 
@@ -110,13 +111,12 @@ export async function encryptAndUpload(
 ): Promise<EncryptUploadResult> {
     onProgress?.('Encrypting with Seal…');
 
-    // Seal identity: raw bytes of the vendor address string
-    const idBytes = new TextEncoder().encode(vendorAddress);
-
+    // Seal identity: vendor address hex string (0x...) as required by SDK
+    // SDK internally calls fromHex(id) to get bytes, so id must be a valid hex string.
     const { encryptedObject } = await newSealClient(suiClient).encrypt({
         threshold: 2,
         packageId,
-        id: idBytes as unknown as string, // Seal SDK types id as string, but accepts bytes
+        id: vendorAddress,
         data: new TextEncoder().encode(plaintext),
     });
 
@@ -169,17 +169,17 @@ export async function fetchAndDecrypt(
 ): Promise<string> {
     const encrypted = await walrusGet(blobId);
 
-    // Seal identity must match what was used during encryption
-    const idBytes = new TextEncoder().encode(vendorAddress);
+    // Seal identity: vendor address bytes decoded from hex (same as what SDK's createFullId uses internally)
+    // SDK createFullId = packageIdBytes + fromHex(vendorAddress)
+    // The Move contract seal_approve receives the raw bytes of the id (= fromHex(vendorAddress))
+    const idBytes = Array.from(fromHex(vendorAddress));
 
     const tx = new Transaction();
     tx.moveCall({
         target: `${packageId}::alert::${moduleFunc}`,
-        // Move contract: seal_approve_subscriber(id: vector<u8>, nft: &SubscriberNFT, clock: &Clock)
-        //                seal_approve_vendor(id: vector<u8>, nft: &VendorNFT)
         arguments: moduleFunc === 'seal_approve_subscriber'
-            ? [tx.pure.vector('u8', Array.from(idBytes)), tx.object(nftObjectId), tx.object('0x6')]
-            : [tx.pure.vector('u8', Array.from(idBytes)), tx.object(nftObjectId)],
+            ? [tx.pure.vector('u8', idBytes), tx.object(nftObjectId), tx.object('0x6')]
+            : [tx.pure.vector('u8', idBytes), tx.object(nftObjectId)],
     });
     const txBytes = await tx.build({ client: suiClient, onlyTransactionKind: true });
 

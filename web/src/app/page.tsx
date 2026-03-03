@@ -130,7 +130,30 @@ export default function ImmunizerDashboard() {
 
   useEffect(() => { setMounted(true); }, []);
 
-  // ─── Live Chain Queries ─────────────────────────────────────────────────────
+  // ─── Body Scroll Lock (Enhanced for Cross-Platform) ─────────────────────────
+  useEffect(() => {
+    const isModalOpen = isPublisherOpen || isOnboarding || !!viewingSkill || !!viewingVendor;
+    const scrollBarWidth = window.innerWidth - document.documentElement.clientWidth;
+
+    if (isModalOpen) {
+      document.body.style.overflow = 'hidden';
+      document.documentElement.style.overflow = 'hidden';
+      // Prevent layout shift when scrollbar disappears
+      if (scrollBarWidth > 0) {
+        document.body.style.paddingRight = `${scrollBarWidth}px`;
+      }
+    } else {
+      document.body.style.overflow = '';
+      document.documentElement.style.overflow = '';
+      document.body.style.paddingRight = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+      document.documentElement.style.overflow = '';
+      document.body.style.paddingRight = '';
+    };
+  }, [isPublisherOpen, isOnboarding, viewingSkill, viewingVendor]);
+
 
   // All VulnerabilityAlert events (public: title, severity, description visible to all)
   const { data: events, isLoading: eventsLoading } = useSuiClientQuery('queryEvents', {
@@ -1184,7 +1207,7 @@ function VendorDetailModal({
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
-        className="glass neon-border rounded-3xl overflow-hidden w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl"
+        className="glass neon-border rounded-3xl overflow-hidden w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overscroll-contain"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between p-6 border-b border-border/50 bg-primary/5">
@@ -1209,7 +1232,7 @@ function VendorDetailModal({
           </button>
         </div>
 
-        <ScrollArea className="flex-1">
+        <div className="flex-1 min-h-0 overflow-auto overscroll-contain scroll-smooth">
           <div className="p-6 space-y-4">
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Published Skills</h4>
@@ -1276,7 +1299,7 @@ function VendorDetailModal({
               </div>
             ))}
           </div>
-        </ScrollArea>
+        </div>
 
         <div className="p-6 border-t border-border/50 bg-muted/5 space-y-4">
           {role === 'VENDOR' && accountAddress === vendor.address ? (
@@ -1401,7 +1424,7 @@ function SkillViewerModal({ skill, isDecrypting, content, error, onClose }: Skil
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
-        className="glass neon-border rounded-3xl overflow-hidden w-full max-w-3xl max-h-[80vh] flex flex-col shadow-2xl"
+        className="glass neon-border rounded-3xl overflow-hidden w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl overscroll-contain"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between p-6 border-b border-border/50 bg-primary/5">
@@ -1419,27 +1442,46 @@ function SkillViewerModal({ skill, isDecrypting, content, error, onClose }: Skil
           </button>
         </div>
 
-        <ScrollArea className="flex-1">
-          <div className="p-6">
+        <div className="flex-1 min-h-0 overflow-auto overscroll-contain scroll-smooth border-b border-border/20">
+          <div className="p-8 h-full flex flex-col">
             {isDecrypting && (
-              <div className="flex flex-col items-center justify-center py-16 gap-4">
-                <Loader2 className="w-8 h-8 text-primary animate-spin" />
-                <p className="text-sm text-muted-foreground">Requesting Seal decryption keys...</p>
-                <p className="text-[10px] text-muted-foreground">Please sign the session key in your wallet</p>
+              <div className="flex-1 flex flex-col items-center justify-center py-12 gap-6 scale-up-in">
+                <div className="relative">
+                  <div className="absolute -inset-4 bg-primary/20 blur-xl rounded-full animate-pulse" />
+                  <Loader2 className="relative w-12 h-12 text-primary animate-spin" />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Fingerprint className="w-4 h-4 text-primary animate-pulse shadow-primary" />
+                  </div>
+                </div>
+                <div className="text-center space-y-2 z-10">
+                  <p className="text-lg font-black uppercase tracking-tighter italic bg-gradient-to-r from-primary to-blue-400 bg-clip-text text-transparent">Inhibitor Protocols Active</p>
+                  <p className="text-[10px] text-muted-foreground font-bold tracking-[0.3em] uppercase opacity-70">Awaiting Seal Sequence Signature</p>
+                </div>
               </div>
             )}
             {error && (
-              <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-4">
-                <p className="text-red-400 text-sm font-mono">{error}</p>
+              <div className="flex-1 flex flex-col items-center justify-center py-12">
+                <div className="bg-red-500/5 border border-red-500/20 rounded-3xl p-8 max-w-md w-full text-center space-y-4 glass">
+                  <div className="p-4 bg-red-500/10 rounded-2xl w-fit mx-auto border border-red-500/20 shadow-lg shadow-red-500/5">
+                    <ShieldAlert className="w-8 h-8 text-red-500" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-red-400 text-xs font-black uppercase tracking-widest">Protocol Failure</p>
+                    <p className="text-muted-foreground text-[11px] font-mono break-all line-clamp-3">{error}</p>
+                  </div>
+                  <Button variant="outline" onClick={onClose} className="w-full border-red-500/30 text-red-500 hover:bg-red-500/10 rounded-xl px-8 uppercase font-black text-[10px] h-10 tracking-widest transition-all hover:scale-[1.02]">Terminate Connection</Button>
+                </div>
               </div>
             )}
             {content && (
-              <div data-color-mode="dark">
-                <MarkdownPreview source={content} className="!bg-transparent" />
+              <div className="w-full flex-1">
+                <div data-color-mode="dark" className="prose prose-invert max-w-none w-full">
+                  <MarkdownPreview source={content} className="!bg-transparent" />
+                </div>
               </div>
             )}
           </div>
-        </ScrollArea>
+        </div>
 
         <div className="p-4 border-t border-border/50 bg-muted/10 flex items-center gap-2">
           <Lock className="w-4 h-4 text-primary" />
@@ -1471,7 +1513,7 @@ function PublisherOnboardingModal({ onClose, onRegister, isRegistering }: Publis
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
-        className="glass neon-border rounded-3xl p-8 w-full max-w-md space-y-6 shadow-2xl"
+        className="glass neon-border rounded-3xl p-8 w-full max-w-md max-h-[90vh] overflow-y-auto space-y-6 shadow-2xl overscroll-contain"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="text-center space-y-2">
