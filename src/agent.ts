@@ -4,7 +4,7 @@
  * Flow:
  *  1. Poll Sui for VulnerabilityAlert events (cronjob)
  *  2. Seal-decrypt skill.md from Walrus
- *  3. Notify user "正在执行免疫" via on-chain ImmunizationStarted event
+ *  3. Notify user "Executing immunization" via on-chain ImmunizationStarted event
  *  4. Pass skill.md to OpenClaw's runEmbeddedPiAgent() for AI-driven execution
  *  5. Report result on-chain: vulnerability_found=true/false + summary
  *
@@ -316,7 +316,7 @@ async function scanAndImmunize() {
     console.log(`📡 [${new Date().toISOString()}] Scanning Sui for new vulnerabilities...`);
 
     const events = await suiClient.queryEvents({
-        query: { MoveModule: { package: PACKAGE_ID, module: 'alert' } },
+        query: { MoveEventType: `${PACKAGE_ID}::alert::VulnerabilityAlert` },
         limit: 20,
         order: 'descending',
     });

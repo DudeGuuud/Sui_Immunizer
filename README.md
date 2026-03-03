@@ -37,7 +37,7 @@ sequenceDiagram
 
     Note over V: Discovers new CVE / vulnerability
 
-    V->>S: encrypt(skill.md, VendorNFT ID)
+    V->>S: encrypt(skill.md, vendor address as Seal identity)
     S-->>V: encryptedBytes
     V->>W: PUT encryptedBytes → blobId
     W-->>V: blobId (content-addressed)
@@ -49,7 +49,7 @@ sequenceDiagram
     C-->>A: new alert found
 
     A->>C: report_immunization_started() → ImmunizationStarted event
-    Note over A: 🔔 User notified: "正在执行免疫 — vendor-xxxx"
+    Note over A: 🔔 User notified: "Executing immunization — vendor-xxxx"
 
     A->>W: GET /v1/blobs/{blobId}
     W-->>A: encryptedBytes
@@ -74,7 +74,7 @@ sequenceDiagram
 
 ```
 sui-immunizer/
-├── web/                        # Next.js 14 dashboard (publisher + subscriber UI)
+├── web/                        # Next.js 16 dashboard (publisher + subscriber UI)
 │   └── src/
 │       ├── app/page.tsx        # Main dashboard (vendor/subscriber roles)
 │       ├── app/providers.tsx   # Sui + Slush wallet providers
@@ -97,7 +97,7 @@ sui-immunizer/
 | Role | What they do |
 |---|---|
 | **Vendor** | Security researcher. Publishes `skill.md` encrypted with Seal via the web dashboard. Holds a `VendorNFT`. |
-| **Subscriber** | Server operator. Pays 1 SUI/month. Agent daemon auto-executes skills. Holds a `SubscriberNFT`. |
+| **Subscriber** | Server operator. Pays vendor-set price (default 1 SUI) per 30-day subscription. Agent daemon auto-executes skills. Holds a `SubscriberNFT`. |
 | **AI Agent** | OpenClaw instance on subscriber's server. Reads the skill tutorial, checks system, applies fixes. |
 
 ---
@@ -126,7 +126,7 @@ sui client publish --gas-budget 100000000
 ### 2. Configure Environment
 
 ```bash
-cp .env.example .env
+cp env.example .env
 ```
 
 ```env
@@ -148,7 +148,7 @@ OPENCLAW_NOTIFY_SESSION_KEY=main:telegram:immunizer
 ### 3. Install OpenClaw
 
 ```bash
-npm install -g openclaw@latest
+curl -fsSL https://openclaw.ai/install.sh | bash
 openclaw onboard --install-daemon
 # Connect your notification channel (Telegram / WhatsApp)
 openclaw channels login
@@ -185,25 +185,25 @@ bun dev
 When the agent detects and executes a skill, you receive messages via your OpenClaw channel (Telegram/WhatsApp):
 
 ```
-🚨 Sui Immunizer: 发现新漏洞补丁
-   来自 vendor-0x1234... · Severity 9
+🚨 Sui Immunizer: New vulnerability patch detected
+   From vendor-0x1234... · Severity 9
    "Remote Code Execution in XYZ Library"
-   正在执行免疫...
+   Executing immunization...
 
-—— [几分钟后] ——
+—— [A few minutes later] ——
 
-💉 Sui Immunizer: 免疫完成
-   漏洞已确认存在并修复 ✅
-   CVE-2026-XXXX 已写入链上状态
+💉 Sui Immunizer: Immunization complete
+   Vulnerability confirmed and patched ✅
+   CVE-2026-XXXX written to on-chain state
    TX: 0xabc...
 ```
 
 or
 
 ```
-✅ Sui Immunizer: 系统健康
-   您的系统未受 CVE-2026-XXXX 影响
-   无需进一步操作
+✅ Sui Immunizer: System healthy
+   Your system is not affected by CVE-2026-XXXX
+   No further action required
 ```
 
 ---

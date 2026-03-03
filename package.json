@@ -4,9 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "npm --prefix web run dev",
-    "web:build": "npm --prefix web run build",
-    "web:lint": "npm --prefix web run lint",
+    "dev": "bun --cwd web run dev",
+    "web:build": "bun --cwd web run build",
+    "web:lint": "bun --cwd web run lint",
+    "agent": "bun src/agent.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
