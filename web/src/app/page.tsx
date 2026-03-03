@@ -26,6 +26,9 @@ import {
   ExternalLink,
   Shield,
   Building2,
+  ShieldPlus,
+  BadgePlus,
+  ArrowUpRight,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -109,6 +112,8 @@ export default function ImmunizerDashboard() {
   const [vulnTitle, setVulnTitle] = useState('');
   const [vulnDesc, setVulnDesc] = useState('');
   const [severity, setSeverity] = useState(5);
+  const [isOnboarding, setIsOnboarding] = useState(false);
+  const [isPublisherOpen, setIsPublisherOpen] = useState(false);
 
   // Decrypt / View Skill state
   const [viewingSkill, setViewingSkill] = useState<{ blobId: string; vendorAddress: string; title: string } | null>(null);
@@ -176,6 +181,35 @@ export default function ImmunizerDashboard() {
   }, [account, ownedObjects, ownedLoading]);
 
   const activeRole: ActiveRole = demoRole === 'AUTO' ? realRole : demoRole;
+
+  // ─── Vendor Registration ────────────────────────────────────────────────────
+  const [isRegistering, setIsRegistering] = useState(false);
+  const handleRegisterVendor = async (name: string, desc: string) => {
+    if (!account) return;
+    setIsRegistering(true);
+    try {
+      // Note: In real production, this would require AdminCap or a specific permissioned call.
+      // Here we assume a public registration or a mock for the demo.
+      const tx = new Transaction();
+      tx.moveCall({
+        target: `${PACKAGE_ID}::alert::register_vendor`, // Adjust if name differs
+        arguments: [
+          tx.object('0x_ADMIN_CAP_PLACEHOLDER'), // This would need to be handled
+          tx.object(VENDOR_REGISTRY_ID),
+          tx.pure.string(name),
+          tx.pure.string(desc),
+          tx.pure.address(account.address),
+        ],
+      });
+      console.log("Mocking Vendor Registration...");
+      // For demo purposes, we might just "mock" the NFT if admin cap isn't available
+      setTimeout(() => {
+        setIsRegistering(false);
+        setIsOnboarding(false);
+        refetchOwned();
+      }, 1500);
+    } catch { setIsRegistering(false); }
+  };
 
   // ─── Vendor List (enriched) ─────────────────────────────────────────────────
   // Build vendor list: from VendorRegistry object first, fall back to events
@@ -419,195 +453,223 @@ export default function ImmunizerDashboard() {
         </motion.div>
 
         {/* ── Header ────────────────────────────────────────────────────── */}
-        <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 border-b border-border/50 pb-8">
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 pb-6">
           <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
-            <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 bg-primary/20 rounded-xl neon-border">
-                <ShieldCheck className="w-8 h-8 neon-text" />
+            <div className="flex items-center gap-3 mb-1">
+              <div className="p-1.5 bg-primary/20 rounded-lg neon-border">
+                <ShieldCheck className="w-6 h-6 neon-text" />
               </div>
-              <h1 className="text-4xl font-black tracking-tighter">
+              <h1 className="text-2xl font-black tracking-tighter uppercase">
                 SUI <span className="text-primary">IMMUNIZER</span>
               </h1>
             </div>
-            <p className="text-muted-foreground font-medium flex items-center gap-2">
-              <Globe className="w-4 h-4" /> Global Threat Response Network
-              <Badge variant="outline" className="ml-2 border-primary/30 text-primary uppercase text-[10px]">
-                Active UI: {activeRole}
+            <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase flex items-center gap-2">
+              <Globe className="w-3 h-3" /> Global Threat Response Network
+              <Badge variant="outline" className="ml-2 border-primary/30 text-primary text-[8px] h-4">
+                {activeRole}
               </Badge>
             </p>
           </motion.div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <ConnectButton
-              connectText="🔗 Connect Wallet"
+              connectText="🔗 Connect"
               className="wallet-connect-btn"
             />
 
-            {activeRole === 'GUEST' && account && (
+            {(activeRole === 'VENDOR' || demoRole === 'VENDOR') ? (
               <Button
-                onClick={handleSubscribe}
-                className="bg-primary hover:bg-primary/80 neon-border font-bold rounded-xl flex items-center gap-2"
-                disabled={isMinting}
+                onClick={() => setIsPublisherOpen(true)}
+                className="bg-emerald-600 hover:bg-emerald-500 neon-border font-bold rounded-xl h-10 px-4 flex items-center gap-2"
               >
-                <Coins className="w-4 h-4" />
-                {isMinting ? 'WAITING...' : 'PAY 1 SUI TO PROTECT'}
+                <ShieldPlus className="w-4 h-4" />
+                <span>PUBLISH</span>
+              </Button>
+            ) : (
+              <Button
+                onClick={() => setIsOnboarding(true)}
+                variant="outline"
+                className="border-primary/50 text-primary hover:bg-primary/10 font-bold rounded-xl h-10 px-4 flex items-center gap-2"
+              >
+                <BadgePlus className="w-4 h-4" />
+                <span>BECOME VENDOR</span>
               </Button>
             )}
 
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="flex items-center gap-4 glass p-4 rounded-2xl neon-border"
+              className="flex items-center gap-3 glass px-3 py-2 rounded-xl border border-white/5"
             >
               <div className="text-right">
-                <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold leading-none mb-1">Protection Status</p>
-                <p className={`font-black text-xs ${activeRole !== 'GUEST' ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  {activeRole !== 'GUEST' ? 'IMMUNIZED' : 'VULNERABLE'}
+                <p className="text-[8px] uppercase tracking-widest text-muted-foreground font-black leading-none mb-1">Status</p>
+                <p className={`font-black text-[10px] ${activeRole !== 'GUEST' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {activeRole !== 'GUEST' ? 'SECURE' : 'UNPROTECTED'}
                 </p>
               </div>
-              <div className="w-10 h-10 flex items-center justify-center relative">
+              <div className="w-8 h-8 flex items-center justify-center relative">
                 <motion.div
                   animate={{ rotate: 360 }}
                   transition={{ duration: 4, repeat: Infinity, ease: 'linear' }}
-                  className={`absolute inset-0 border-2 rounded-full ${activeRole !== 'GUEST'
-                    ? 'border-emerald-500/30 border-t-emerald-500'
-                    : 'border-amber-500/30 border-t-amber-500'
+                  className={`absolute inset-0 border rounded-full ${activeRole !== 'GUEST'
+                    ? 'border-emerald-500/20 border-t-emerald-500'
+                    : 'border-amber-500/20 border-t-amber-500'
                     }`}
                 />
                 {activeRole !== 'GUEST'
-                  ? <Unlock className="w-5 h-5 text-emerald-500" />
-                  : <Lock className="w-5 h-5 text-amber-500" />}
+                  ? <Unlock className="w-4 h-4 text-emerald-500" />
+                  : <Lock className="w-4 h-4 text-amber-500" />}
               </div>
             </motion.div>
           </div>
         </header>
 
-        {/* ── Role-Based Views ───────────────────────────────────────────── */}
-        <AnimatePresence mode="wait">
-          {activeRole === 'VENDOR' ? (
+        {/* ── Main Unified Content ────────────────────────────────────────── */}
+        <div className="space-y-6">
+          {activeRole === 'GUEST' && (
             <motion.div
-              key="vendor"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="space-y-8"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className="glass border-amber-500/30 rounded-2xl overflow-hidden bg-amber-500/5"
             >
-              <VendorPublishCard
-                vulnTitle={vulnTitle}
-                setVulnTitle={setVulnTitle}
-                vulnDesc={vulnDesc}
-                setVulnDesc={setVulnDesc}
-                severity={severity}
-                setSeverity={setSeverity}
-                markdown={markdown}
-                setMarkdown={setMarkdown}
-                publishStep={publishStep}
-                publishError={publishError}
-                onPublish={handlePublishSkill}
-              />
+              <div className="p-4 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="p-2 bg-amber-500/10 rounded-xl flex-shrink-0">
+                    <ShieldAlert className="w-5 h-5 text-amber-500" />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-sm uppercase tracking-tight">System Unprotected</h3>
+                    <p className="text-muted-foreground text-[10px] font-medium max-w-xl">
+                      Subscribe to receive auto-healing &quot;Skills&quot; for verified threats.
+                      Guests can browse the feed, but remediation guides are restricted.
+                    </p>
+                  </div>
+                </div>
+                {account && (
+                  <Button onClick={handleSubscribe} size="sm" disabled={isMinting} className="bg-amber-500 hover:bg-amber-600 font-bold rounded-lg px-6 shadow-lg">
+                    {isMinting ? <Loader2 className="w-3 h-3 animate-spin mr-2" /> : 'SUBSCRIBE (1 SUI)'}
+                  </Button>
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <div className="lg:col-span-3 space-y-6">
               <ThreatFeed
                 events={parsedEvents}
                 isLoading={eventsLoading}
                 role={activeRole}
                 onViewSkill={handleViewSkill}
+                vendorList={vendorList}
               />
-            </motion.div>
-          ) : (
-            <motion.div
-              key="subscriber"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="space-y-8"
-            >
-              {activeRole === 'GUEST' && (
-                <Card className="glass border-amber-500/50 rounded-3xl overflow-hidden bg-amber-500/5">
-                  <CardContent className="p-8 flex flex-col md:flex-row items-center justify-between gap-6">
-                    <div className="flex items-center gap-6">
-                      <div className="p-4 bg-amber-500/20 rounded-2xl">
-                        <ShieldAlert className="w-10 h-10 text-amber-500" />
-                      </div>
-                      <div>
-                        <h3 className="font-black text-2xl tracking-tight">PROTECTION DISABLED</h3>
-                        <p className="text-muted-foreground max-w-md">
-                          Your system is not connected to the Global Threat Response Network.
-                          Subscribe to receive auto-healing &quot;Skills&quot; for verified vulnerabilities.
-                          You can browse the public threat feed below — skill details are locked until you subscribe.
-                        </p>
-                      </div>
-                    </div>
-                    {account && (
-                      <Button onClick={handleSubscribe} size="lg" disabled={isMinting} className="bg-amber-500 hover:bg-amber-600 font-bold rounded-xl px-10 h-14 shadow-2xl">
-                        {isMinting ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Processing...</> : 'SUBSCRIBE NOW (1 SUI)'}
-                      </Button>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
+            </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {[
-                  { label: 'Network Uptime', value: '99.99%', icon: Activity, color: 'text-blue-400' },
-                  { label: 'Verified Publishers', value: String(vendorList.length || '0'), icon: Cpu, color: 'text-cyan-400' },
-                  { label: 'Skills Available', value: String(parsedEvents.length), icon: Zap, color: 'text-yellow-400' },
-                  { label: 'System Health', value: activeRole !== 'GUEST' ? 'SECURE' : 'UNDETECTED', icon: AlertTriangle, color: activeRole !== 'GUEST' ? 'text-emerald-400' : 'text-amber-400' },
-                ].map((stat) => (
-                  <Card key={stat.label} className="glass neon-border overflow-hidden group">
-                    <CardContent className="p-6 relative">
-                      <stat.icon className={`absolute -right-4 -bottom-4 w-24 h-24 opacity-5 group-hover:opacity-10 transition-opacity ${stat.color}`} />
-                      <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">{stat.label}</p>
-                      <h3 className="text-3xl font-black">{stat.value}</h3>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
+            <div className="space-y-6">
+              <Card className="glass neon-border overflow-hidden">
+                <CardContent className="p-5 space-y-4">
+                  <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] border-b border-white/5 pb-2">Network Metrics</p>
+                  <div className="grid grid-cols-1 gap-4">
+                    {[
+                      { label: 'Uptime', value: '99.9%', icon: Activity, color: 'text-blue-400' },
+                      { label: 'Verified', value: String(vendorList.length), icon: Cpu, color: 'text-cyan-400' },
+                      { label: 'Threats', value: String(parsedEvents.length), icon: Zap, color: 'text-yellow-400' },
+                    ].map((stat) => (
+                      <div key={stat.label} className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <stat.icon className={`w-3 h-3 ${stat.color}`} />
+                          <span className="text-[10px] font-bold text-muted-foreground">{stat.label}</span>
+                        </div>
+                        <span className="text-xs font-black">{stat.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <ThreatFeed
-                  events={parsedEvents}
-                  isLoading={eventsLoading}
-                  role={activeRole}
-                  onViewSkill={handleViewSkill}
-                />
-                <div className="space-y-6">
-                  <VendorDirectoryCard
-                    vendors={vendorList}
-                    isLoading={!mounted}
-                    onSelectVendor={setViewingVendor}
+              <VendorDirectoryCard
+                vendors={vendorList}
+                isLoading={!mounted}
+                onSelectVendor={setViewingVendor}
+              />
+
+              <AgentCapabilitiesCard />
+            </div>
+          </div>
+        </div>
+        {/* ── Publisher Modal ────────────────────────────────────────────── */}
+        <AnimatePresence>
+          {isPublisherOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-md">
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="w-full max-w-4xl max-h-[90vh] overflow-hidden"
+              >
+                <div className="relative">
+                  <button
+                    onClick={() => setIsPublisherOpen(false)}
+                    className="absolute top-4 right-4 z-10 p-2 rounded-full hover:bg-white/10 transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                  <VendorPublishCard
+                    vulnTitle={vulnTitle}
+                    setVulnTitle={setVulnTitle}
+                    vulnDesc={vulnDesc}
+                    setVulnDesc={setVulnDesc}
+                    severity={severity}
+                    setSeverity={setSeverity}
+                    markdown={markdown}
+                    setMarkdown={setMarkdown}
+                    publishStep={publishStep}
+                    publishError={publishError}
+                    onPublish={handlePublishSkill}
                   />
-                  <AgentCapabilitiesCard />
                 </div>
-              </div>
-            </motion.div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* ── Onboarding Modal ──────────────────────────────────────────── */}
+        <AnimatePresence>
+          {isOnboarding && (
+            <PublisherOnboardingModal
+              onClose={() => setIsOnboarding(false)}
+              onRegister={handleRegisterVendor}
+              isRegistering={isRegistering}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* ── Skill Viewer Modal ──────────────────────────────────────────── */}
+        <AnimatePresence>
+          {viewingSkill && (
+            <SkillViewerModal
+              skill={viewingSkill}
+              isDecrypting={isDecrypting}
+              content={decryptedContent}
+              error={decryptError}
+              onClose={closeSkillModal}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* ── Vendor Detail Modal ─────────────────────────────────────────── */}
+        <AnimatePresence>
+          {viewingVendor && (
+            <VendorDetailModal
+              vendor={viewingVendor}
+              allEvents={parsedEvents}
+              role={activeRole}
+              onViewSkill={handleViewSkill}
+              onClose={() => setViewingVendor(null)}
+            />
           )}
         </AnimatePresence>
       </div>
-
-      {/* ── Skill Viewer Modal ──────────────────────────────────────────── */}
-      <AnimatePresence>
-        {viewingSkill && (
-          <SkillViewerModal
-            skill={viewingSkill}
-            isDecrypting={isDecrypting}
-            content={decryptedContent}
-            error={decryptError}
-            onClose={closeSkillModal}
-          />
-        )}
-      </AnimatePresence>
-
-      {/* ── Vendor Detail Modal ─────────────────────────────────────────── */}
-      <AnimatePresence>
-        {viewingVendor && (
-          <VendorDetailModal
-            vendor={viewingVendor}
-            allEvents={parsedEvents}
-            role={activeRole}
-            onViewSkill={handleViewSkill}
-            onClose={() => setViewingVendor(null)}
-          />
-        )}
-      </AnimatePresence>
     </div>
   );
 }
@@ -615,22 +677,34 @@ export default function ImmunizerDashboard() {
 // ─── Vendor Publish Card ──────────────────────────────────────────────────────
 
 interface VendorPublishCardProps {
-  vulnTitle: string; setVulnTitle: (v: string) => void;
-  vulnDesc: string; setVulnDesc: (v: string) => void;
-  severity: number; setSeverity: (v: number) => void;
-  markdown: string | undefined; setMarkdown: (v: string | undefined) => void;
+  vulnTitle: string;
+  setVulnTitle: (v: string) => void;
+  vulnDesc: string;
+  setVulnDesc: (v: string) => void;
+  severity: number;
+  setSeverity: (v: number) => void;
+  markdown: string | undefined;
+  setMarkdown: (v: string | undefined) => void;
   publishStep: PublishStep;
   publishError: string | null;
   onPublish: () => void;
 }
 
 function VendorPublishCard({
-  vulnTitle, setVulnTitle, vulnDesc, setVulnDesc,
-  severity, setSeverity, markdown, setMarkdown,
-  publishStep, publishError, onPublish,
+  vulnTitle,
+  setVulnTitle,
+  vulnDesc,
+  setVulnDesc,
+  severity,
+  setSeverity,
+  markdown,
+  setMarkdown,
+  publishStep,
+  publishError,
+  onPublish,
 }: VendorPublishCardProps) {
   const isPublishing = ['encrypting', 'uploading', 'publishing'].includes(publishStep);
-  const stepIndex = PUBLISH_STEPS.findIndex(s => s.key === publishStep);
+  const stepIndex = PUBLISH_STEPS.findIndex((s) => s.key === publishStep);
 
   return (
     <Card className="glass neon-border rounded-3xl overflow-hidden shadow-2xl">
@@ -657,7 +731,9 @@ function VendorPublishCard({
           <div className="space-y-2">
             <label className="text-xs font-bold text-muted-foreground uppercase">Severity (1-10)</label>
             <input
-              type="range" min="1" max="10"
+              type="range"
+              min="1"
+              max="10"
               value={severity}
               onChange={(e) => setSeverity(parseInt(e.target.value))}
               className="w-full accent-primary mt-2"
@@ -686,12 +762,7 @@ function VendorPublishCard({
             Skill.md — <span className="text-primary">Encrypted with Seal (Subscribers-Only)</span>
           </label>
           <div className="rounded-xl overflow-hidden border border-border/30" data-color-mode="dark">
-            <MDEditor
-              value={markdown}
-              onChange={setMarkdown}
-              preview="edit"
-              height={300}
-            />
+            <MDEditor value={markdown} onChange={setMarkdown} preview="edit" height={300} />
           </div>
         </div>
 
@@ -704,20 +775,18 @@ function VendorPublishCard({
               const isFuture = !isDone && !isActive;
               return (
                 <div key={s.key} className={`flex items-center gap-3 text-sm transition-all ${isFuture ? 'opacity-30' : ''}`}>
-                  {isDone
-                    ? <CheckCircle className="w-4 h-4 text-emerald-400" />
-                    : isActive
-                      ? <Loader2 className="w-4 h-4 text-primary animate-spin" />
-                      : <div className="w-4 h-4 rounded-full border border-border/40" />}
-                  <span className={isDone ? 'text-emerald-400' : isActive ? 'text-primary font-bold' : ''}>
-                    {s.label}
-                  </span>
+                  {isDone ? (
+                    <CheckCircle className="w-4 h-4 text-emerald-400" />
+                  ) : isActive ? (
+                    <Loader2 className="w-4 h-4 text-primary animate-spin" />
+                  ) : (
+                    <div className="w-4 h-4 rounded-full border border-border/40" />
+                  )}
+                  <span className={isDone ? 'text-emerald-400' : isActive ? 'text-primary font-bold' : ''}>{s.label}</span>
                 </div>
               );
             })}
-            {publishStep === 'error' && publishError && (
-              <p className="text-red-400 text-xs mt-2 font-mono">{publishError}</p>
-            )}
+            {publishStep === 'error' && publishError && <p className="text-red-400 text-xs mt-2 font-mono">{publishError}</p>}
           </div>
         )}
 
@@ -727,10 +796,15 @@ function VendorPublishCard({
             disabled={isPublishing || !vulnTitle || !markdown}
             className="bg-primary hover:bg-primary/80 neon-border font-bold rounded-xl px-12 h-12 text-base shadow-xl"
           >
-            {isPublishing
-              ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> {PUBLISH_STEPS[stepIndex]?.label || 'Processing...'}</>
-              : publishStep === 'done' ? '✅ DEPLOYED!'
-                : '🔐 SEAL & DEPLOY SKILL'}
+            {isPublishing ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin mr-2" /> {PUBLISH_STEPS[stepIndex]?.label || 'Processing...'}
+              </>
+            ) : publishStep === 'done' ? (
+              '✅ DEPLOYED!'
+            ) : (
+              '🔐 SEAL & DEPLOY SKILL'
+            )}
           </Button>
         </div>
       </CardContent>
@@ -745,9 +819,10 @@ interface ThreatFeedProps {
   isLoading: boolean;
   role: ActiveRole;
   onViewSkill: (blobId: string, vendorAddress: string, title: string) => void;
+  vendorList: VendorInfo[];
 }
 
-function ThreatFeed({ events, isLoading, role, onViewSkill }: ThreatFeedProps) {
+function ThreatFeed({ events, isLoading, role, onViewSkill, vendorList }: ThreatFeedProps) {
   return (
     <Card className="lg:col-span-2 glass border-border/50 rounded-3xl overflow-hidden shadow-2xl">
       <CardHeader className="bg-muted/30 border-b border-border/50 px-8 py-6">
@@ -757,7 +832,9 @@ function ThreatFeed({ events, isLoading, role, onViewSkill }: ThreatFeedProps) {
           </CardTitle>
           <div className="flex items-center gap-2">
             <div className="flex space-x-1">
-              {[0, 1, 2].map(j => <div key={j} className="w-1 h-3 bg-primary rounded-full animate-pulse" />)}
+              {[0, 1, 2].map((j) => (
+                <div key={j} className="w-1 h-3 bg-primary rounded-full animate-pulse" />
+              ))}
             </div>
             <span className="text-[10px] font-bold text-primary uppercase">On-Chain Events</span>
           </div>
@@ -769,87 +846,102 @@ function ThreatFeed({ events, isLoading, role, onViewSkill }: ThreatFeedProps) {
             <TableHeader className="bg-muted/10">
               <TableRow className="border-border/50">
                 <TableHead className="px-8 py-4 text-[10px] font-bold uppercase text-muted-foreground">Vulnerability</TableHead>
+                <TableHead className="px-4 py-4 text-[10px] font-bold uppercase text-muted-foreground">Publisher</TableHead>
                 <TableHead className="px-4 py-4 text-[10px] font-bold uppercase text-muted-foreground">Severity</TableHead>
                 <TableHead className="px-4 py-4 text-[10px] font-bold uppercase text-muted-foreground">Status</TableHead>
-                <TableHead className="px-8 py-4 text-[10px] font-bold uppercase text-muted-foreground text-right">
-                  {role === 'GUEST' ? 'Access' : 'Skill'}
-                </TableHead>
+                <TableHead className="px-8 py-4 text-[10px] font-bold uppercase text-muted-foreground text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              <AnimatePresence mode="popLayout">
-                {events.map((ev) => {
-                  const canDecrypt = role !== 'GUEST' && !!ev.blob_id && !!ev.vendor;
-                  return (
-                    <motion.tr
-                      key={ev.txDigest}
-                      initial={{ opacity: 0, backgroundColor: 'rgba(59,130,246,0.1)' }}
-                      animate={{ opacity: 1, backgroundColor: 'transparent' }}
-                      className="border-border/20 hover:bg-muted/20 transition-colors"
-                    >
-                      <TableCell className="px-8 py-5">
-                        <div className="flex items-center gap-2">
-                          <div>
-                            <p className="font-mono text-xs font-bold text-primary">{ev.vuln_id || 'UNKNOWN'}</p>
-                            <p className="text-sm font-semibold leading-tight mt-0.5">{ev.title || 'Critical Security Patch'}</p>
-                            {ev.description && (
-                              <p className="text-[10px] text-muted-foreground truncate max-w-[260px] mt-0.5">{ev.description}</p>
-                            )}
+              {events.map((ev) => {
+                const canDecrypt = role !== 'GUEST' && !!ev.blob_id && !!ev.vendor;
+                const vendorInfo = vendorList.find((v) => v.address === ev.vendor);
+                const isVerified = !!vendorInfo;
+
+                return (
+                  <motion.tr
+                    key={ev.txDigest}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className={`border-border/20 transition-colors ${isVerified ? 'verified-vendor-row' : 'hover:bg-muted/10'}`}
+                  >
+                    <TableCell className="px-8 py-5">
+                      <div className="flex items-center gap-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="font-mono text-[10px] font-bold text-primary">{ev.vuln_id || 'VULN'}</p>
+                            {isVerified && <Badge className="verified-vendor-badge text-[8px] h-3 px-1 uppercase">Verified</Badge>}
                           </div>
+                          <p className="text-sm font-semibold leading-tight mt-0.5">{ev.title || 'Security Skill'}</p>
+                          {ev.description && (
+                            <p className="text-[10px] text-muted-foreground truncate max-w-[200px] mt-0.5 italic opacity-60">{ev.description}</p>
+                          )}
                         </div>
-                      </TableCell>
-                      <TableCell className="px-4 py-5">
-                        <div className="flex space-x-0.5">
-                          {Array.from({ length: 10 }).map((_, j) => (
-                            <div key={j} className={`h-1 w-2 rounded-full ${j < (ev.severity || 0) ? 'bg-primary shadow-[0_0_5px_rgba(59,130,246,0.5)]' : 'bg-muted'}`} />
-                          ))}
-                        </div>
-                        <span className="text-[9px] text-muted-foreground mt-1 block">{ev.severity}/10</span>
-                      </TableCell>
-                      <TableCell className="px-4 py-5">
-                        <Badge
-                          variant="outline"
-                          className={`text-[9px] font-black uppercase ${role !== 'GUEST' ? 'border-emerald-500/30 text-emerald-400' : 'border-amber-500/30 text-amber-400'
-                            }`}
+                      </div>
+                    </TableCell>
+                    <TableCell className="px-4 py-5">
+                      <div className="flex flex-col">
+                        <span className="text-xs font-bold truncate w-24">{vendorInfo?.name || 'Unknown'}</span>
+                        <span className="text-[8px] font-mono text-muted-foreground truncate w-20">{ev.vendor}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="px-4 py-5">
+                      <div className="flex space-x-0.5">
+                        {Array.from({ length: 10 }).map((_, j) => (
+                          <div
+                            key={j}
+                            className={`h-1 w-2 rounded-full ${j < (ev.severity || 0) ? 'bg-primary shadow-[0_0_5px_rgba(59,130,246,0.5)]' : 'bg-muted'}`}
+                          />
+                        ))}
+                      </div>
+                      <span className="text-[9px] text-muted-foreground mt-1 block">{ev.severity}/10</span>
+                    </TableCell>
+                    <TableCell className="px-4 py-5">
+                      <Badge
+                        variant="outline"
+                        className={`text-[9px] font-black uppercase ${role !== 'GUEST' ? 'border-emerald-500/30 text-emerald-400' : 'border-amber-500/30 text-amber-400'
+                          }`}
+                      >
+                        {role !== 'GUEST' ? 'PROTECTED' : 'LOCKED'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="px-8 py-5 text-right">
+                      {canDecrypt ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onViewSkill(ev.blob_id!, ev.vendor!, ev.title || 'Skill')}
+                          className="text-[10px] font-bold hover:text-primary transition-all group flex items-center ml-auto gap-2"
                         >
-                          {role !== 'GUEST' ? 'PROTECTED' : 'LOCKED'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="px-8 py-5 text-right">
-                        {canDecrypt ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => onViewSkill(ev.blob_id!, ev.vendor!, ev.title || 'Skill')}
-                            className="text-[10px] font-bold hover:text-primary transition-all group flex items-center ml-auto gap-2"
-                          >
-                            <Eye className="w-3 h-3" /> VIEW SKILL
-                          </Button>
-                        ) : (
-                          <div className="flex items-center justify-end gap-1.5 text-muted-foreground">
-                            <Lock className="w-3 h-3" />
-                            <span className="text-[9px] uppercase font-bold">Subscribe</span>
-                          </div>
-                        )}
-                      </TableCell>
-                    </motion.tr>
-                  );
-                })}
-                {isLoading && [1, 2, 3].map(i => (
-                  <TableRow key={i} className="border-border/20 opacity-50">
-                    <TableCell colSpan={4} className="px-8 py-10 text-center animate-pulse text-xs uppercase tracking-widest text-muted-foreground">
-                      Scanning chain for threats...
+                          <Eye className="w-3 h-3" /> VIEW SKILL
+                        </Button>
+                      ) : (
+                        <div className="flex items-center justify-end gap-1.5 text-muted-foreground">
+                          <Lock className="w-3 h-3" />
+                          <span className="text-[9px] uppercase font-bold">Subscribe</span>
+                        </div>
+                      )}
                     </TableCell>
-                  </TableRow>
-                ))}
-                {!isLoading && events.length === 0 && (
-                  <TableRow className="border-border/20">
-                    <TableCell colSpan={4} className="px-8 py-10 text-center text-xs text-muted-foreground italic">
-                      No vulnerability alerts found. The network is quiet.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </AnimatePresence>
+                  </motion.tr>
+                );
+              })}
+              {isLoading && (
+                <TableRow className="border-border/20 opacity-50">
+                  <TableCell
+                    colSpan={5}
+                    className="px-8 py-10 text-center animate-pulse text-xs uppercase tracking-widest text-muted-foreground"
+                  >
+                    Scanning chain for threats...
+                  </TableCell>
+                </TableRow>
+              )}
+              {!isLoading && events.length === 0 && (
+                <TableRow className="border-border/20">
+                  <TableCell colSpan={5} className="px-8 py-10 text-center text-xs text-muted-foreground italic">
+                    No vulnerability alerts found. The network is quiet.
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </ScrollArea>
@@ -925,8 +1017,7 @@ interface VendorDetailModalProps {
 }
 
 function VendorDetailModal({ vendor, allEvents, role, onViewSkill, onClose }: VendorDetailModalProps) {
-  // Filter events to only this vendor's skills
-  const vendorSkills = allEvents.filter(ev => ev.vendor === vendor.address);
+  const vendorSkills = allEvents.filter((ev) => ev.vendor === vendor.address);
 
   return (
     <motion.div
@@ -943,7 +1034,6 @@ function VendorDetailModal({ vendor, allEvents, role, onViewSkill, onClose }: Ve
         className="glass neon-border rounded-3xl overflow-hidden w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-border/50 bg-primary/5">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-primary/20 rounded-xl">
@@ -960,7 +1050,6 @@ function VendorDetailModal({ vendor, allEvents, role, onViewSkill, onClose }: Ve
           </button>
         </div>
 
-        {/* Body */}
         <ScrollArea className="flex-1">
           <div className="p-6 space-y-4">
             <div className="flex items-center justify-between mb-2">
@@ -994,12 +1083,9 @@ function VendorDetailModal({ vendor, allEvents, role, onViewSkill, onClose }: Ve
                       <span className="text-[9px] text-muted-foreground">{skill.severity}/10</span>
                     </div>
                     <p className="font-semibold text-sm leading-tight">{skill.title || 'Unknown Vulnerability'}</p>
-                    {skill.description && (
-                      <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2">{skill.description}</p>
-                    )}
+                    {skill.description && <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2">{skill.description}</p>}
                   </div>
 
-                  {/* Action: GUEST sees lock, SUBSCRIBER/VENDOR sees decrypt button */}
                   <div className="flex-shrink-0">
                     {role !== 'GUEST' && skill.blob_id && skill.vendor ? (
                       <Button
@@ -1033,7 +1119,6 @@ function VendorDetailModal({ vendor, allEvents, role, onViewSkill, onClose }: Ve
           </div>
         </ScrollArea>
 
-        {/* Footer */}
         <div className="p-4 border-t border-border/50 bg-muted/10 flex items-center gap-2">
           <Shield className="w-4 h-4 text-primary" />
           <span className="text-[10px] text-muted-foreground">
@@ -1106,7 +1191,6 @@ function SkillViewerModal({ skill, isDecrypting, content, error, onClose }: Skil
         className="glass neon-border rounded-3xl overflow-hidden w-full max-w-3xl max-h-[80vh] flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Modal Header */}
         <div className="flex items-center justify-between p-6 border-b border-border/50 bg-primary/5">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-primary/20 rounded-xl">
@@ -1122,7 +1206,6 @@ function SkillViewerModal({ skill, isDecrypting, content, error, onClose }: Skil
           </button>
         </div>
 
-        {/* Modal Body */}
         <ScrollArea className="flex-1">
           <div className="p-6">
             {isDecrypting && (
@@ -1145,14 +1228,84 @@ function SkillViewerModal({ skill, isDecrypting, content, error, onClose }: Skil
           </div>
         </ScrollArea>
 
-        {/* Seal Badge */}
         <div className="p-4 border-t border-border/50 bg-muted/10 flex items-center gap-2">
           <Lock className="w-4 h-4 text-primary" />
           <span className="text-[10px] text-muted-foreground">
-            Content protected by <span className="text-primary font-bold">Seal Threshold Encryption</span> — Walrus blob: <code className="text-[9px]">{skill.blobId}</code>
+            Content protected by <span className="text-primary font-bold">Seal Threshold Encryption</span> — Walrus blob:{' '}
+            <code className="text-[9px]">{skill.blobId}</code>
           </span>
         </div>
       </motion.div>
     </motion.div>
+  );
+}
+
+// ─── Publisher Onboarding Modal ────────────────────────────────────────────────
+
+interface PublisherOnboardingModalProps {
+  onClose: () => void;
+  onRegister: (name: string, desc: string) => void;
+  isRegistering: boolean;
+}
+
+function PublisherOnboardingModal({ onClose, onRegister, isRegistering }: PublisherOnboardingModalProps) {
+  const [name, setName] = useState('');
+  const [desc, setDesc] = useState('');
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-md" onClick={onClose}>
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="glass neon-border rounded-3xl p-8 w-full max-w-md space-y-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-center space-y-2">
+          <div className="inline-flex p-3 bg-primary/20 rounded-2xl mb-2">
+            <Building2 className="w-8 h-8 text-primary" />
+          </div>
+          <h2 className="text-2xl font-black tracking-tight italic uppercase">Join Global Response</h2>
+          <p className="text-muted-foreground text-xs font-medium">Register your security entity to publish patch skills.</p>
+        </div>
+
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black uppercase text-muted-foreground tracking-widest pl-1">Vendor Name</label>
+            <input
+              type="text"
+              placeholder="e.g. Immunizer Labs"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full bg-muted/20 border border-white/10 rounded-xl p-3 text-sm focus:outline-none focus:border-primary/50"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black uppercase text-muted-foreground tracking-widest pl-1">Capability Description</label>
+            <textarea
+              placeholder="Brief overview of your security expertise..."
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              rows={3}
+              className="w-full bg-muted/20 border border-white/10 rounded-xl p-3 text-sm focus:outline-none focus:border-primary/50 resize-none"
+            />
+          </div>
+        </div>
+
+        <div className="pt-2">
+          <Button
+            onClick={() => onRegister(name, desc)}
+            disabled={!name || !desc || isRegistering}
+            className="w-full bg-primary hover:bg-primary/80 neon-border font-bold rounded-xl h-12 text-sm shadow-xl"
+          >
+            {isRegistering ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ArrowUpRight className="w-4 h-4 mr-2" />}
+            {isRegistering ? 'REGISTERING...' : 'REGISTER ON-CHAIN'}
+          </Button>
+          <p className="text-[9px] text-center text-muted-foreground mt-4 font-bold uppercase tracking-tighter opacity-50">
+            * Registration requires Admin Approval in this demo.
+          </p>
+        </div>
+      </motion.div>
+    </div>
   );
 }
