@@ -33,7 +33,7 @@ const SUI_NETWORK = (process.env.SUI_NETWORK as 'testnet' | 'mainnet') || 'testn
 const PACKAGE_ID = process.env.IMMUNIZER_PACKAGE_ID || '0x_IMMUNIZER';
 const SCAN_INTERVAL = 60_000; // 1 minute polling
 
-const WALRUS_AGGREGATOR = process.env.WALRUS_AGGREGATOR
+const WALRUS_AGGREGATOR = process.env.WALRUS_AGGREGATOR_URL
     || 'https://aggregator.walrus-testnet.walrus.space';
 
 // OpenClaw workspace for this agent's sessions
@@ -43,11 +43,21 @@ const OPENCLAW_WORKSPACE = process.env.OPENCLAW_WORKSPACE
 // Notification channel sender key (e.g. user's WhatsApp number / Telegram ID)
 const NOTIFY_SESSION_KEY = process.env.OPENCLAW_NOTIFY_SESSION_KEY || 'main:telegram:immunizer';
 
-// ─── Seal Testnet Key Servers ─────────────────────────────────────────────────
+// ─── Seal Testnet Key Servers (Mysten Labs Open Mode) ─────────────────────────
+// Override via SEAL_KEY_SERVER_1 / SEAL_KEY_SERVER_2 in .env
 const SEAL_SERVER_CONFIGS = [
-    { objectId: '0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75', weight: 1 },
-    { objectId: '0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8', weight: 1 },
+    {
+        objectId: process.env.SEAL_KEY_SERVER_1 ||
+            '0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75',
+        weight: 1,
+    },
+    {
+        objectId: process.env.SEAL_KEY_SERVER_2 ||
+            '0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8',
+        weight: 1,
+    },
 ];
+
 
 // ─── Clients ──────────────────────────────────────────────────────────────────
 const suiClient = new SuiJsonRpcClient({ url: getJsonRpcFullnodeUrl(SUI_NETWORK), network: SUI_NETWORK });

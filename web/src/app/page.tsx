@@ -46,14 +46,13 @@ import {
   useSuiClient,
 } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
-import { SessionKey } from '@mysten/seal';
-import { fromHex } from '@mysten/sui/utils';
 import MDEditor from '@uiw/react-md-editor';
 import MarkdownPreview from '@uiw/react-markdown-preview';
 import {
   encryptAndUpload,
   fetchAndDecrypt,
   createAndInitSessionKey,
+  type SessionKey,
 } from '@/lib/seal';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
@@ -234,9 +233,9 @@ export default function ImmunizerDashboard() {
   };
 
   // ─── View / Decrypt Skill (Subscriber / Vendor) ─────────────────────────────
-  const handleViewSkill = async (blobId: string, objectId: string, title: string) => {
+  const handleViewSkill = async (blobId: string, sealId: string, title: string) => {
     if (!account) return;
-    setViewingSkill({ blobId, objectId, title });
+    setViewingSkill({ blobId, objectId: sealId, title });
     setDecryptedContent(null);
     setDecryptError(null);
     setIsDecrypting(true);
@@ -254,7 +253,6 @@ export default function ImmunizerDashboard() {
         sessionKeyRef.current = sessionKey;
       }
 
-      // Determine which NFT + function to use
       const isVendor = realRole === 'VENDOR';
       const nftType = isVendor ? 'VendorNFT' : 'SubscriberNFT';
       const approveFunc = isVendor ? 'seal_approve_vendor' : 'seal_approve_subscriber';
@@ -263,7 +261,7 @@ export default function ImmunizerDashboard() {
 
       const plaintext = await fetchAndDecrypt(
         blobId,
-        objectId,
+        sealId,
         PACKAGE_ID,
         approveFunc,
         nftId,
@@ -275,8 +273,7 @@ export default function ImmunizerDashboard() {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Decryption failed';
       setDecryptError(msg);
-      // Invalidate session key on error
-      sessionKeyRef.current = null;
+      sessionKeyRef.current = null; // invalidate on error
     } finally {
       setIsDecrypting(false);
     }
@@ -315,10 +312,10 @@ export default function ImmunizerDashboard() {
               key={role}
               onClick={() => setDemoRole(role)}
               className={`px-4 py-1.5 rounded-xl text-[10px] font-black transition-all ${demoRole === role
-                  ? role === 'AUTO' ? 'bg-primary text-white neon-border'
-                    : role === 'VENDOR' ? 'bg-emerald-500 text-white shadow-[0_0_10px_rgba(16,185,129,0.5)]'
-                      : 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]'
-                  : 'hover:bg-primary/10'
+                ? role === 'AUTO' ? 'bg-primary text-white neon-border'
+                  : role === 'VENDOR' ? 'bg-emerald-500 text-white shadow-[0_0_10px_rgba(16,185,129,0.5)]'
+                    : 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]'
+                : 'hover:bg-primary/10'
                 }`}
             >
               {role === 'AUTO' ? 'AUTO (ON-CHAIN)' : role === 'VENDOR' ? 'PUBLISHER VIEW' : 'SUBSCRIBER VIEW'}
@@ -376,8 +373,8 @@ export default function ImmunizerDashboard() {
                   animate={{ rotate: 360 }}
                   transition={{ duration: 4, repeat: Infinity, ease: 'linear' }}
                   className={`absolute inset-0 border-2 rounded-full ${activeRole !== 'GUEST'
-                      ? 'border-emerald-500/30 border-t-emerald-500'
-                      : 'border-amber-500/30 border-t-amber-500'
+                    ? 'border-emerald-500/30 border-t-emerald-500'
+                    : 'border-amber-500/30 border-t-amber-500'
                     }`}
                 />
                 {activeRole !== 'GUEST'

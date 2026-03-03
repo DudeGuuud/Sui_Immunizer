@@ -1,38 +1,46 @@
-/**
- * Seal + Walrus Integration Utilities
- *
- * Provides:
- * - encryptAndUpload: Seal-encrypt data, upload to Walrus, return blobId
- * - fetchAndDecrypt: Download from Walrus, Seal-decrypt using SessionKey
- * - createAndInitSessionKey: Build + initialize a SessionKey with wallet signature
- */
-
 /* eslint-disable @typescript-eslint/no-explicit-any */
+/**
+ * Seal + Walrus integration utilities.
+ *
+ * All configuration is read from environment variables — no hardcoded values.
+ * Exports three functions used by the frontend dashboard:
+ *   encryptAndUpload       Seal-encrypt + Walrus PUT
+ *   fetchAndDecrypt        Walrus GET + Seal decrypt
+ *   createAndInitSessionKey  Build + sign a Seal SessionKey
+ */
 
 import { SealClient, SessionKey } from '@mysten/seal';
 import { Transaction } from '@mysten/sui/transactions';
 
-// Re-export SessionKey so pages don't need to import directly from @mysten/seal
 export type { SessionKey };
 
-// ─── Seal Testnet Key Servers (Mysten Labs Open Mode) ─────────────────────────
-// Object IDs from https://seal-docs.wal.app/Pricing
-const SEAL_SERVER_CONFIGS = [
-    { objectId: '0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75', weight: 1 },
-    { objectId: '0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8', weight: 1 },
-];
+// ─── Config (all from env) ────────────────────────────────────────────────────
 
-export const WALRUS_PUBLISHER_URL =
+const WALRUS_PUBLISHER =
     process.env.NEXT_PUBLIC_WALRUS_PUBLISHER_URL ||
     'https://publisher.walrus-testnet.walrus.space';
 
-export const WALRUS_AGGREGATOR_URL =
+const WALRUS_AGGREGATOR =
     process.env.NEXT_PUBLIC_WALRUS_AGGREGATOR_URL ||
     'https://aggregator.walrus-testnet.walrus.space';
 
-const STORAGE_EPOCHS = 5;
+const STORAGE_EPOCHS = Number(process.env.NEXT_PUBLIC_WALRUS_STORAGE_EPOCHS) || 5;
 
-// ─── Seal Client Factory ──────────────────────────────────────────────────────
+// 2-of-2 threshold. Object IDs: https://seal-docs.wal.app
+const SEAL_SERVER_CONFIGS = [
+    {
+        objectId: process.env.NEXT_PUBLIC_SEAL_KEY_SERVER_1 ||
+            '0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75',
+        weight: 1,
+    },
+    {
+        objectId: process.env.NEXT_PUBLIC_SEAL_KEY_SERVER_2 ||
+            '0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8',
+        weight: 1,
+    },
+];
+
+// ─── Internal helpers ─────────────────────────────────────────────────────────
 
 function newSealClient(suiClient: any): SealClient {
     return new SealClient({
@@ -42,20 +50,42 @@ function newSealClient(suiClient: any): SealClient {
     } as any);
 }
 
-// ─── Encryption + Walrus Upload ───────────────────────────────────────────────
+async function walrusPut(data: Uint8Array): Promise<string> {
+    const res = await fetch(
+        `${WALRUS_PUBLISHER}/v1/blobs?epochs=${STORAGE_EPOCHS}`,
+        { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: Buffer.from(data) },
 
-export interface EncryptUploadResult {
-    blobId: string;
+    );
+    if (!res.ok)
+        throw new Error(`Walrus upload failed: ${res.status} ${res.statusText}`);
+
+    const json = await res.json() as any;
+    const blobId: string =
+        json?.newlyCreated?.blobObject?.blobId ||
+        json?.alreadyCertified?.blobId;
+
+    if (!blobId) throw new Error('Walrus returned no blobId');
+    return blobId;
 }
 
+async function walrusGet(blobId: string): Promise<Uint8Array> {
+    const res = await fetch(`${WALRUS_AGGREGATOR}/v1/blobs/${blobId}`);
+    if (!res.ok)
+        throw new Error(`Walrus fetch failed: ${res.status} ${res.statusText}`);
+    return new Uint8Array(await res.arrayBuffer());
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+export interface EncryptUploadResult { blobId: string }
+
 /**
- * Encrypt skill.md content with Seal and upload to Walrus.
- *
- * @param plaintext  - The skill.md markdown content
- * @param packageId  - The Immunizer package ID (0x-prefixed hex)
- * @param sealId     - The Seal identity: VendorNFT objectId used as the key namespace
- * @param suiClient  - Any Sui client instance (SuiClient from @mysten/sui/client)
- * @param onProgress - Optional progress callback
+ * Encrypt skill.md with Seal and upload to Walrus.
+ * @param plaintext  skill.md markdown content
+ * @param packageId  Immunizer package ID (0x…)
+ * @param sealId     Seal identity – VendorNFT object ID
+ * @param suiClient  live @mysten/dapp-kit client
+ * @param onProgress optional step callback for UI
  */
 export async function encryptAndUpload(
     plaintext: string,
@@ -64,55 +94,28 @@ export async function encryptAndUpload(
     suiClient: any,
     onProgress?: (step: string) => void,
 ): Promise<EncryptUploadResult> {
-    onProgress?.('Encrypting with Seal...');
-
-    const sealClient = newSealClient(suiClient);
-    const data = new TextEncoder().encode(plaintext);
-
-    const { encryptedObject } = await sealClient.encrypt({
+    onProgress?.('Encrypting with Seal…');
+    const { encryptedObject } = await newSealClient(suiClient).encrypt({
         threshold: 2,
         packageId,
         id: sealId,
-        data,
+        data: new TextEncoder().encode(plaintext),
     });
 
-    onProgress?.('Uploading to Walrus...');
-
-    const response = await fetch(
-        `${WALRUS_PUBLISHER_URL}/v1/blobs?epochs=${STORAGE_EPOCHS}`,
-        {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/octet-stream' },
-            body: encryptedObject,
-        },
-    );
-
-    if (!response.ok) {
-        throw new Error(`Walrus upload failed: ${response.status} ${response.statusText}`);
-    }
-
-    const result = await response.json() as any;
-    const blobId: string =
-        result?.newlyCreated?.blobObject?.blobId ||
-        result?.alreadyCertified?.blobId;
-
-    if (!blobId) {
-        throw new Error('Walrus upload succeeded but no blobId returned');
-    }
-
-    onProgress?.('Encrypted blob uploaded to Walrus ✓');
+    onProgress?.('Uploading to Walrus…');
+    const blobId = await walrusPut(encryptedObject);
+    onProgress?.('Uploaded ✓');
     return { blobId };
 }
 
-// ─── Session Key Creation ─────────────────────────────────────────────────────
-
+/** Sign args type matching @mysten/dapp-kit useSignPersonalMessage */
 export type SignPersonalMessageFn = (
     args: { message: Uint8Array },
 ) => Promise<{ signature: string }>;
 
 /**
- * Create and initialize a Seal SessionKey using a wallet signature.
- * The wallet prompts the user to sign once; the key is valid for ttlMin minutes.
+ * Create a Seal SessionKey and sign it with the connected wallet.
+ * Call once; cache the result for up to ttlMin minutes.
  */
 export async function createAndInitSessionKey(
     address: string,
@@ -120,32 +123,21 @@ export async function createAndInitSessionKey(
     suiClient: any,
     signFn: SignPersonalMessageFn,
 ): Promise<SessionKey> {
-    const sessionKey = await SessionKey.create({
-        address,
-        packageId,
-        ttlMin: 10,
-        suiClient,
-    });
-
-    const message = sessionKey.getPersonalMessage();
-    const { signature } = await signFn({ message });
-    await sessionKey.setPersonalMessageSignature(signature);
-
-    return sessionKey;
+    const sk = await SessionKey.create({ address, packageId, ttlMin: 10, suiClient });
+    const { signature } = await signFn({ message: sk.getPersonalMessage() });
+    await sk.setPersonalMessageSignature(signature);
+    return sk;
 }
 
-// ─── Walrus Download + Seal Decrypt ──────────────────────────────────────────
-
 /**
- * Download encrypted bytes from Walrus, then Seal-decrypt them.
- *
- * @param blobId      - Walrus blob ID
- * @param sealId      - The Seal identity used during encryption (the VendorNFT objectId)
- * @param packageId   - Immunizer package ID
- * @param moduleFunc  - Which seal_approve function to call
- * @param nftObjectId - The SubscriberNFT or VendorNFT object ID to pass as Move argument
- * @param sessionKey  - Initialized Seal SessionKey
- * @param suiClient   - Sui RPC client
+ * Download an encrypted Walrus blob and Seal-decrypt it.
+ * @param blobId       Walrus blob ID
+ * @param sealId       Seal identity used during encryption
+ * @param packageId    Immunizer package ID
+ * @param moduleFunc   Which seal_approve_* to call
+ * @param nftObjectId  Subscriber or Vendor NFT object ID
+ * @param sessionKey   Initialized SessionKey
+ * @param suiClient    live client
  */
 export async function fetchAndDecrypt(
     blobId: string,
@@ -156,42 +148,19 @@ export async function fetchAndDecrypt(
     sessionKey: SessionKey,
     suiClient: any,
 ): Promise<string> {
-    // 1. Fetch encrypted bytes from Walrus
-    const response = await fetch(`${WALRUS_AGGREGATOR_URL}/v1/blobs/${blobId}`);
-    if (!response.ok) {
-        throw new Error(`Walrus fetch failed: ${response.status} ${response.statusText}`);
-    }
-    const encryptedBytes = new Uint8Array(await response.arrayBuffer());
+    const encrypted = await walrusGet(blobId);
 
-    // 2. Build the seal_approve transaction
     const tx = new Transaction();
     tx.moveCall({
         target: `${packageId}::alert::${moduleFunc}`,
-        arguments:
-            moduleFunc === 'seal_approve_subscriber'
-                ? [
-                    tx.pure.string(sealId),  // id: the Seal identity bytes
-                    tx.object(nftObjectId),
-                    tx.object('0x6'),         // Clock (shared object)
-                ]
-                : [
-                    tx.pure.string(sealId),
-                    tx.object(nftObjectId),
-                ],
+        arguments: moduleFunc === 'seal_approve_subscriber'
+            ? [tx.pure.string(sealId), tx.object(nftObjectId), tx.object('0x6')]
+            : [tx.pure.string(sealId), tx.object(nftObjectId)],
     });
+    const txBytes = await tx.build({ client: suiClient, onlyTransactionKind: true });
 
-    const txBytes = await tx.build({
-        client: suiClient,
-        onlyTransactionKind: true,
+    const decrypted = await newSealClient(suiClient).decrypt({
+        data: encrypted, sessionKey, txBytes,
     });
-
-    // 3. Seal decrypt
-    const sealClient = newSealClient(suiClient);
-    const decryptedBytes = await sealClient.decrypt({
-        data: encryptedBytes,
-        sessionKey,
-        txBytes,
-    });
-
-    return new TextDecoder().decode(decryptedBytes);
+    return new TextDecoder().decode(decrypted);
 }
