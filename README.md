@@ -287,3 +287,4 @@ If you prefer a traditional crontab, run `crontab -e` and add:
 ## License
 
 MIT
+
