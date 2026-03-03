@@ -14,6 +14,7 @@ use sui::vec_set::{Self, VecSet};
 const EInsufficientFunds: u64 = 0;
 const EAlreadyRegistered: u64 = 1;
 const EExpired: u64 = 2;
+const EInvalidVendor: u64 = 3;
 
 // --- Capabilities & NFTs ---
 
@@ -37,10 +38,12 @@ public struct VendorNFT has key, store {
     id: UID,
     name: String,
     description: String,
+    subscription_price: u64,
 }
 
 public struct SubscriberNFT has key, store {
     id: UID,
+    vendor: address,
     user_name: String,
     expiry_ms: u64, // 0 means no expiry
 }
@@ -72,6 +75,12 @@ public struct VulnerabilityAlert has copy, drop {
 public struct VendorRegistered has copy, drop {
     vendor: address,
     name: String,
+    subscription_price: u64,
+}
+
+public struct PriceUpdated has copy, drop {
+    vendor: address,
+    new_price: u64,
 }
 
 /// Emitted immediately when agent starts processing a vulnerability
@@ -160,6 +169,7 @@ public fun register_vendor(
             id: object::new(ctx),
             name,
             description,
+            subscription_price: 1000000000, // 1 SUI default
         },
         recipient,
     );
@@ -167,31 +177,55 @@ public fun register_vendor(
     event::emit(VendorRegistered {
         vendor: recipient,
         name,
+        subscription_price: 1000000000,
     });
 }
 
 public fun subscribe(
     registry: &mut Registry,
+    vendor_registry: &VendorRegistry,
+    vendor_address: address,
+    vendor_price: u64,
     payment: Coin<SUI>,
     user_name: String,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    assert!(coin::value(&payment) >= registry.subscription_price, EInsufficientFunds);
+    assert!(vec_set::contains(&vendor_registry.vendors, &vendor_address), EInvalidVendor);
+    assert!(coin::value(&payment) >= vendor_price, EInsufficientFunds);
 
-    let paid_balance = coin::into_balance(payment);
-    balance::join(&mut registry.balance, paid_balance);
+    let fee_amount = vendor_price * 5 / 100; // 5% fee
+    let vendor_amount = vendor_price - fee_amount;
+
+    let mut payment_balance = coin::into_balance(payment);
+
+    // Split fee
+    let fee_balance = balance::split(&mut payment_balance, fee_amount);
+    balance::join(&mut registry.balance, fee_balance);
+
+    // Give remaining (and any overage) to vendor
+    let vendor_coin = coin::from_balance(payment_balance, ctx);
+    transfer::public_transfer(vendor_coin, vendor_address);
 
     let expiry_ms = clock.timestamp_ms() + registry.subscription_duration_ms;
 
     transfer::transfer(
         SubscriberNFT {
             id: object::new(ctx),
+            vendor: vendor_address,
             user_name,
             expiry_ms,
         },
         ctx.sender(),
     );
+}
+
+public fun update_vendor_price(vendor_nft: &mut VendorNFT, new_price: u64, ctx: &mut TxContext) {
+    vendor_nft.subscription_price = new_price;
+    event::emit(PriceUpdated {
+        vendor: ctx.sender(),
+        new_price,
+    });
 }
 
 /// publish_skill: Vendor publishes a Seal-encrypted skill blob on-chain.

@@ -6,8 +6,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactNode } from 'react';
 
 const { networkConfig } = createNetworkConfig({
-    testnet: { url: getJsonRpcFullnodeUrl('testnet'), network: 'testnet' as 'testnet' },
-    mainnet: { url: getJsonRpcFullnodeUrl('mainnet'), network: 'mainnet' as 'mainnet' },
+    testnet: { url: getJsonRpcFullnodeUrl('testnet'), network: 'testnet' },
+    mainnet: { url: getJsonRpcFullnodeUrl('mainnet'), network: 'mainnet' },
 });
 
 type SuiNetwork = 'testnet' | 'mainnet';

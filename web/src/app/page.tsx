@@ -10,12 +10,10 @@ import {
   Cpu,
   Zap,
   Search,
-  AlertTriangle,
   ShieldAlert,
   Fingerprint,
   Lock,
   Unlock,
-  Coins,
   Users,
   Eye,
   Settings,
@@ -61,9 +59,10 @@ import {
 } from '@/lib/seal';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
-const PACKAGE_ID = process.env.NEXT_PUBLIC_PACKAGE_ID || '0x_IMMUNIZER';
-const REGISTRY_ID = process.env.NEXT_PUBLIC_REGISTRY_ID || '0x_REGISTRY';
+const PACKAGE_ID = process.env.NEXT_PUBLIC_PACKAGE_ID || '';
+const REGISTRY_ID = process.env.NEXT_PUBLIC_REGISTRY_ID || '';
 const VENDOR_REGISTRY_ID = process.env.NEXT_PUBLIC_VENDOR_REGISTRY_ID || '';
+const ADMIN_CAP_ID = process.env.NEXT_PUBLIC_ADMIN_CAP_ID || '';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type PublishStep = 'idle' | 'encrypting' | 'uploading' | 'publishing' | 'done' | 'error';
@@ -80,10 +79,12 @@ interface VulnAlertEvent {
   vendor?: string;
 }
 
-interface VendorInfo {
+type VendorInfo = {
   address: string;
   name: string;
-}
+  price: string; // in SUI
+  isTrusted?: boolean;
+};
 
 const PUBLISH_STEPS: { key: PublishStep; label: string }[] = [
   { key: 'encrypting', label: 'Encrypting with Seal...' },
@@ -124,6 +125,8 @@ export default function ImmunizerDashboard() {
 
   // Vendor detail modal
   const [viewingVendor, setViewingVendor] = useState<VendorInfo | null>(null);
+  const [newVendorPrice, setNewVendorPrice] = useState<string>('1.0');
+  const [isUpdatingPrice, setIsUpdatingPrice] = useState(false);
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -134,6 +137,9 @@ export default function ImmunizerDashboard() {
     query: { MoveEventType: `${PACKAGE_ID}::alert::VulnerabilityAlert` },
     limit: 20,
     order: 'descending',
+  }, {
+    refetchInterval: 15000,
+    enabled: !!PACKAGE_ID && mounted,
   });
 
   // VendorRegistered events — used to enrich vendor names
@@ -141,6 +147,9 @@ export default function ImmunizerDashboard() {
     query: { MoveEventType: `${PACKAGE_ID}::alert::VendorRegistered` },
     limit: 50,
     order: 'descending',
+  }, {
+    refetchInterval: 30000, // Vendor list changes less frequently
+    enabled: !!PACKAGE_ID && mounted,
   });
 
   // VendorRegistry shared object — real on-chain vendor list
@@ -150,7 +159,10 @@ export default function ImmunizerDashboard() {
       id: VENDOR_REGISTRY_ID,
       options: { showContent: true },
     },
-    { enabled: !!VENDOR_REGISTRY_ID && VENDOR_REGISTRY_ID !== '0x_REPLACE_AFTER_PUBLISH' && mounted },
+    {
+      enabled: !!VENDOR_REGISTRY_ID && mounted,
+      refetchInterval: 60000, // Shared object state for registry can be slow
+    },
   );
 
   // User's owned NFTs for role detection
@@ -162,11 +174,65 @@ export default function ImmunizerDashboard() {
         MatchAny: [
           { StructType: `${PACKAGE_ID}::alert::VendorNFT` },
           { StructType: `${PACKAGE_ID}::alert::SubscriberNFT` },
+          { StructType: `${PACKAGE_ID}::alert::AdminCap` },
         ],
       },
       options: { showType: true },
     },
-    { enabled: !!account && mounted },
+    {
+      enabled: !!account && mounted,
+      refetchInterval: 30000,
+    },
+  );
+
+  const handleUpdatePrice = async (newPriceSui: string) => {
+    if (!account) return;
+    const vendorNft = ownedObjects?.data.find(o => o.data?.type?.includes('VendorNFT'))?.data?.objectId;
+    if (!vendorNft) {
+      console.error("Vendor NFT not found. Cannot update price.");
+      return;
+    }
+    setIsUpdatingPrice(true);
+
+    try {
+      const priceMist = BigInt(Math.floor(Number(newPriceSui) * 1e9));
+      const tx = new Transaction();
+      tx.moveCall({
+        target: `${PACKAGE_ID}::alert::update_vendor_price`,
+        arguments: [
+          tx.object(vendorNft),
+          tx.pure.u64(priceMist),
+        ],
+      });
+      signAndExecute(
+        { transaction: tx },
+        {
+          onSuccess: () => {
+            console.log(`Vendor price updated to ${newPriceSui} SUI!`);
+            setIsUpdatingPrice(false);
+            setViewingVendor(null); // Close modal
+            setTimeout(() => refetchOwned(), 2000); // Refetch to update UI
+          },
+          onError: (err) => {
+            console.error("Price update failed:", err);
+            setIsUpdatingPrice(false);
+          },
+        }
+      );
+    } catch (e) {
+      console.error(e);
+      setIsUpdatingPrice(false);
+    }
+  };
+
+  const { data: priceEvents } = useSuiClientQuery(
+    'queryEvents',
+    {
+      query: { MoveEventType: `${PACKAGE_ID}::alert::PriceUpdated` },
+      limit: 50,
+      order: 'descending',
+    },
+    { refetchInterval: 30000 },
   );
 
   // ─── Role Detection ─────────────────────────────────────────────────────────
@@ -185,69 +251,93 @@ export default function ImmunizerDashboard() {
   // ─── Vendor Registration ────────────────────────────────────────────────────
   const [isRegistering, setIsRegistering] = useState(false);
   const handleRegisterVendor = async (name: string, desc: string) => {
-    if (!account) return;
+    if (!account || !ADMIN_CAP_ID) return;
     setIsRegistering(true);
     try {
-      // Note: In real production, this would require AdminCap or a specific permissioned call.
-      // Here we assume a public registration or a mock for the demo.
+      // Find AdminCap in owned objects
+      const adminCap = ownedObjects?.data.find(o => o.data?.type?.includes('AdminCap'))?.data?.objectId || ADMIN_CAP_ID;
+
       const tx = new Transaction();
       tx.moveCall({
-        target: `${PACKAGE_ID}::alert::register_vendor`, // Adjust if name differs
+        target: `${PACKAGE_ID}::alert::register_vendor`,
         arguments: [
-          tx.object('0x_ADMIN_CAP_PLACEHOLDER'), // This would need to be handled
+          tx.object(adminCap),
           tx.object(VENDOR_REGISTRY_ID),
           tx.pure.string(name),
           tx.pure.string(desc),
           tx.pure.address(account.address),
         ],
       });
-      console.log("Mocking Vendor Registration...");
-      // For demo purposes, we might just "mock" the NFT if admin cap isn't available
-      setTimeout(() => {
-        setIsRegistering(false);
-        setIsOnboarding(false);
-        refetchOwned();
-      }, 1500);
-    } catch { setIsRegistering(false); }
+
+      signAndExecute(
+        { transaction: tx },
+        {
+          onSuccess: () => {
+            setIsRegistering(false);
+            setIsOnboarding(false);
+            console.log("Vendor registered successfully!");
+            setTimeout(() => refetchOwned(), 2000);
+          },
+          onError: (err) => {
+            console.error("Registration failed:", err);
+            setIsRegistering(false);
+          },
+        },
+      );
+    } catch (e) {
+      console.error(e);
+      setIsRegistering(false);
+    }
   };
 
   // ─── Vendor List (enriched) ─────────────────────────────────────────────────
   // Build vendor list: from VendorRegistry object first, fall back to events
   const vendorList = useMemo((): VendorInfo[] => {
-    // Build name map from VendorRegistered events
-    const nameMap = new Map<string, string>();
-    vendorEvents?.data.forEach(ev => {
-      const { vendor, name } = ev.parsedJson as { vendor?: string; name?: string };
-      if (vendor) nameMap.set(vendor, name || 'Unknown Vendor');
-    });
+    const map = new Map<string, VendorInfo>();
 
-    // Try to read from VendorRegistry object (has `vendors: VecSet<address>`)
-    const content = vendorRegistryObj?.data?.content;
-    if (content && 'fields' in content) {
-      const fields = (content as { fields: Record<string, unknown> }).fields;
-      const vendorsField = fields?.vendors;
-      // VecSet<address> is stored as { contents: address[] }
-      const addresses: string[] = (vendorsField as { contents?: string[] })?.contents || [];
-      if (addresses.length > 0) {
-        return addresses.map(addr => ({
-          address: addr,
-          name: nameMap.get(addr) || `Vendor ${addr.slice(0, 6)}…`,
-        }));
-      }
-    }
-
-    // Fallback: deduplicate from events
-    const seen = new Set<string>();
-    const vendors: VendorInfo[] = [];
+    // 1. Initial names and prices from VendorRegistered events
     vendorEvents?.data.forEach(ev => {
-      const { vendor, name } = ev.parsedJson as { vendor?: string; name?: string };
-      if (vendor && !seen.has(vendor)) {
-        seen.add(vendor);
-        vendors.push({ address: vendor, name: name || 'Unknown Vendor' });
+      const parsed = ev.parsedJson as any;
+      if (parsed?.vendor && parsed?.name) {
+        map.set(parsed.vendor, {
+          address: parsed.vendor,
+          name: parsed.name,
+          price: (Number(parsed.subscription_price || 1000000000) / 1e9).toString(),
+        });
       }
     });
-    return vendors;
-  }, [vendorRegistryObj, vendorEvents]);
+
+    // 2. Pricing updates from PriceUpdated events
+    priceEvents?.data.forEach(ev => {
+      const parsed = ev.parsedJson as any;
+      if (parsed?.vendor && parsed?.new_price) {
+        const existing = map.get(parsed.vendor);
+        if (existing) {
+          existing.price = (Number(parsed.new_price) / 1e9).toString();
+        } else {
+          map.set(parsed.vendor, {
+            address: parsed.vendor,
+            name: `Vendor ${parsed.vendor.slice(0, 6)}…`,
+            price: (Number(parsed.new_price) / 1e9).toString(),
+          });
+        }
+      }
+    });
+
+    // 3. Trusted status from VendorRegistry shared object
+    const registeredAddrs = (vendorRegistryObj?.data?.content as any)?.fields?.vendors?.fields?.contents || [];
+    registeredAddrs.forEach((addr: string) => {
+      const existing = map.get(addr);
+      if (existing) {
+        existing.isTrusted = true;
+      } else {
+        // If a vendor is in the registry but no events found (e.g., old events pruned)
+        map.set(addr, { address: addr, name: `Vendor ${addr.slice(0, 6)}…`, price: '1.0', isTrusted: true });
+      }
+    });
+
+    return Array.from(map.values());
+  }, [vendorEvents, vendorRegistryObj, priceEvents]);
 
   // Parsed vulnerability alert events
   const parsedEvents = useMemo((): VulnAlertEvent[] => {
@@ -268,29 +358,45 @@ export default function ImmunizerDashboard() {
 
   // ─── Subscription ───────────────────────────────────────────────────────────
   const [isMinting, setIsMinting] = useState(false);
-  const handleSubscribe = async () => {
-    if (!account) return;
+  const handleSubscribe = async (vendorAddress: string, priceSui: string) => {
+    if (!account || !REGISTRY_ID) return;
     setIsMinting(true);
     try {
+      const priceMist = BigInt(Math.floor(Number(priceSui) * 1e9));
       const tx = new Transaction();
-      const [coin] = tx.splitCoins(tx.gas, [1000000000]);
+      const [coin] = tx.splitCoins(tx.gas, [priceMist]);
+
       tx.moveCall({
         target: `${PACKAGE_ID}::alert::subscribe`,
         arguments: [
           tx.object(REGISTRY_ID),
+          tx.object(VENDOR_REGISTRY_ID),
+          tx.pure.address(vendorAddress),
+          tx.pure.u64(priceMist),
           coin,
           tx.pure.string(account.address.slice(0, 8)),
           tx.object('0x6'), // Clock
         ],
       });
+
       signAndExecute(
         { transaction: tx },
         {
-          onSuccess: () => { refetchOwned(); setIsMinting(false); },
-          onError: () => setIsMinting(false),
+          onSuccess: () => {
+            setIsMinting(false);
+            console.log(`Successfully subscribed to ${vendorAddress.slice(0, 6)}... for ${priceSui} SUI!`);
+            setTimeout(() => refetchOwned(), 2000);
+          },
+          onError: (err) => {
+            console.error("Subscription failed:", err);
+            setIsMinting(false);
+          },
         },
       );
-    } catch { setIsMinting(false); }
+    } catch (e) {
+      console.error(e);
+      setIsMinting(false);
+    }
   };
 
   // ─── Publish Skill (Vendor) ─────────────────────────────────────────────────
@@ -342,11 +448,13 @@ export default function ImmunizerDashboard() {
             setVulnTitle('');
             setVulnDesc('');
             setMarkdown("## [Skill] Patch...");
+            console.log("Skill published successfully!");
             setTimeout(() => setPublishStep('idle'), 3000);
           },
           onError: (err) => {
             setPublishError(err.message);
             setPublishStep('error');
+            console.error(`Publish failed: ${err.message}`);
           },
         },
       );
@@ -354,6 +462,7 @@ export default function ImmunizerDashboard() {
       const msg = e instanceof Error ? e.message : 'Unknown error';
       setPublishError(msg);
       setPublishStep('error');
+      console.error(`Publish failed: ${msg}`);
     }
   };
 
@@ -403,6 +512,7 @@ export default function ImmunizerDashboard() {
       const msg = e instanceof Error ? e.message : 'Decryption failed';
       setDecryptError(msg);
       sessionKeyRef.current = null; // invalidate on error
+      console.error(`Decryption failed: ${msg}`);
     } finally {
       setIsDecrypting(false);
     }
@@ -546,7 +656,7 @@ export default function ImmunizerDashboard() {
                   </div>
                 </div>
                 {account && (
-                  <Button onClick={handleSubscribe} size="sm" disabled={isMinting} className="bg-amber-500 hover:bg-amber-600 font-bold rounded-lg px-6 shadow-lg">
+                  <Button onClick={() => handleSubscribe(vendorList[0]?.address || '', vendorList[0]?.price || '1.0')} size="sm" disabled={isMinting} className="bg-amber-500 hover:bg-amber-600 font-bold rounded-lg px-6 shadow-lg">
                     {isMinting ? <Loader2 className="w-3 h-3 animate-spin mr-2" /> : 'SUBSCRIBE (1 SUI)'}
                   </Button>
                 )}
@@ -561,7 +671,8 @@ export default function ImmunizerDashboard() {
                 isLoading={eventsLoading}
                 role={activeRole}
                 onViewSkill={handleViewSkill}
-                vendorList={vendorList}
+                vendors={vendorList}
+                onSubscribe={handleSubscribe}
               />
             </div>
 
@@ -666,6 +777,12 @@ export default function ImmunizerDashboard() {
               role={activeRole}
               onViewSkill={handleViewSkill}
               onClose={() => setViewingVendor(null)}
+              onSubscribe={handleSubscribe}
+              onUpdatePrice={handleUpdatePrice}
+              isUpdatingPrice={isUpdatingPrice}
+              vendorPriceInput={newVendorPrice}
+              setVendorPriceInput={setNewVendorPrice}
+              accountAddress={account?.address}
             />
           )}
         </AnimatePresence>
@@ -819,10 +936,11 @@ interface ThreatFeedProps {
   isLoading: boolean;
   role: ActiveRole;
   onViewSkill: (blobId: string, vendorAddress: string, title: string) => void;
-  vendorList: VendorInfo[];
+  vendors: VendorInfo[];
+  onSubscribe: (vendorAddress: string, priceSui: string) => void;
 }
 
-function ThreatFeed({ events, isLoading, role, onViewSkill, vendorList }: ThreatFeedProps) {
+function ThreatFeed({ events, isLoading, role, onViewSkill, vendors, onSubscribe }: ThreatFeedProps) {
   return (
     <Card className="lg:col-span-2 glass border-border/50 rounded-3xl overflow-hidden shadow-2xl">
       <CardHeader className="bg-muted/30 border-b border-border/50 px-8 py-6">
@@ -855,7 +973,7 @@ function ThreatFeed({ events, isLoading, role, onViewSkill, vendorList }: Threat
             <TableBody>
               {events.map((ev) => {
                 const canDecrypt = role !== 'GUEST' && !!ev.blob_id && !!ev.vendor;
-                const vendorInfo = vendorList.find((v) => v.address === ev.vendor);
+                const vendorInfo = vendors.find((v) => v.address === ev.vendor);
                 const isVerified = !!vendorInfo;
 
                 return (
@@ -916,9 +1034,19 @@ function ThreatFeed({ events, isLoading, role, onViewSkill, vendorList }: Threat
                           <Eye className="w-3 h-3" /> VIEW SKILL
                         </Button>
                       ) : (
-                        <div className="flex items-center justify-end gap-1.5 text-muted-foreground">
-                          <Lock className="w-3 h-3" />
-                          <span className="text-[9px] uppercase font-bold">Subscribe</span>
+                        <div className="flex flex-col items-end gap-1 text-muted-foreground group/sub"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const v = vendors.find(vend => vend.address === ev.vendor);
+                            if (v) onSubscribe(v.address, v.price);
+                          }}>
+                          <div className="flex items-center justify-end gap-1.5 hover:text-primary transition-all cursor-pointer">
+                            <Lock className="w-3 h-3" />
+                            <span className="text-[9px] uppercase font-bold">Subscribe</span>
+                          </div>
+                          {vendors.find(vend => vend.address === ev.vendor)?.price && (
+                            <span className="text-[8px] opacity-60">Price: {vendors.find(vend => vend.address === ev.vendor)?.price} SUI</span>
+                          )}
                         </div>
                       )}
                     </TableCell>
@@ -991,8 +1119,11 @@ function VendorDirectoryCard({ vendors, isLoading, onSelectVendor }: VendorDirec
                   <p className="text-[9px] font-mono text-muted-foreground truncate w-28">{v.address}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <Badge className="bg-emerald-500/10 text-emerald-400 text-[8px] border-none uppercase">Verified</Badge>
+              <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold text-primary">{v.price} SUI</span>
+                  <Badge className="bg-emerald-500/10 text-emerald-400 text-[8px] border-none uppercase">Verified</Badge>
+                </div>
                 <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:text-primary transition-colors" />
               </div>
             </button>
@@ -1014,10 +1145,32 @@ interface VendorDetailModalProps {
   role: ActiveRole;
   onViewSkill: (blobId: string, vendorAddress: string, title: string) => void;
   onClose: () => void;
+  onSubscribe: (vendorAddress: string, priceSui: string) => void;
+  onUpdatePrice: (newPriceSui: string) => void;
+  isUpdatingPrice: boolean;
+  vendorPriceInput: string;
+  setVendorPriceInput: (price: string) => void;
+  accountAddress: string | undefined;
 }
 
-function VendorDetailModal({ vendor, allEvents, role, onViewSkill, onClose }: VendorDetailModalProps) {
+function VendorDetailModal({
+  vendor,
+  allEvents,
+  role,
+  onViewSkill,
+  onClose,
+  onSubscribe,
+  onUpdatePrice,
+  isUpdatingPrice,
+  vendorPriceInput,
+  setVendorPriceInput,
+  accountAddress,
+}: VendorDetailModalProps) {
   const vendorSkills = allEvents.filter((ev) => ev.vendor === vendor.address);
+
+  useEffect(() => {
+    setVendorPriceInput(vendor.price);
+  }, [vendor.price, setVendorPriceInput]);
 
   return (
     <motion.div
@@ -1040,12 +1193,18 @@ function VendorDetailModal({ vendor, allEvents, role, onViewSkill, onClose }: Ve
               <Building2 className="w-5 h-5 text-primary" />
             </div>
             <div>
-              <h3 className="font-black text-base">{vendor.name}</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="font-black text-base">{vendor.name}</h3>
+                <Badge className="bg-emerald-500/10 text-emerald-400 text-[8px] border-none uppercase">Verified</Badge>
+              </div>
               <p className="text-[10px] font-mono text-muted-foreground">{vendor.address}</p>
             </div>
-            <Badge className="bg-emerald-500/10 text-emerald-400 text-[8px] border-none uppercase ml-2">Verified Publisher</Badge>
           </div>
-          <button onClick={onClose} className="p-2 rounded-xl hover:bg-muted/30 transition-colors">
+          <div className="flex flex-col items-end gap-1 text-right">
+            <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">Price</p>
+            <p className="text-sm font-black text-primary">{vendor.price} SUI</p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-xl hover:bg-muted/30 transition-colors ml-4">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -1119,12 +1278,66 @@ function VendorDetailModal({ vendor, allEvents, role, onViewSkill, onClose }: Ve
           </div>
         </ScrollArea>
 
-        <div className="p-4 border-t border-border/50 bg-muted/10 flex items-center gap-2">
-          <Shield className="w-4 h-4 text-primary" />
-          <span className="text-[10px] text-muted-foreground">
-            Skill content is <span className="text-primary font-bold">Seal-encrypted</span> on Walrus.
-            {role === 'GUEST' && ' Subscribe to unlock full skill details and remediation guides.'}
-          </span>
+        <div className="p-6 border-t border-border/50 bg-muted/5 space-y-4">
+          {role === 'VENDOR' && accountAddress === vendor.address ? (
+            <div className="space-y-3">
+              <h4 className="text-[10px] font-bold uppercase tracking-widest text-primary">Vendor Settings</h4>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 relative">
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={vendorPriceInput}
+                    onChange={(e) => setVendorPriceInput(e.target.value)}
+                    className="w-full bg-background/20 rounded-xl border border-border/30 pl-4 pr-12 h-10 text-sm font-bold text-white focus:outline-none focus:border-primary/50"
+                    placeholder="New price (SUI)..."
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground">SUI</span>
+                </div>
+                <Button
+                  size="sm"
+                  disabled={isUpdatingPrice}
+                  onClick={() => onUpdatePrice(vendorPriceInput)}
+                  className="rounded-xl font-bold text-[10px] px-4"
+                >
+                  {isUpdatingPrice ? <Loader2 className="w-3 h-3 animate-spin" /> : 'UPDATE PRICE'}
+                </Button>
+              </div>
+              <p className="text-[9px] text-muted-foreground italic">Updating price will emit a PriceUpdated event on-chain.</p>
+            </div>
+          ) : role === 'GUEST' ? (
+            <div className="space-y-3 p-4 rounded-2xl bg-primary/5 border border-primary/20">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-bold text-foreground">Subscribe to {vendor.name}</h4>
+                  <p className="text-[10px] text-muted-foreground">Unlock all skills from this vendor.</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-black text-primary">{vendor.price} SUI</p>
+                  <p className="text-[9px] text-muted-foreground italic">Incl. 5% platform fee</p>
+                </div>
+              </div>
+              <Button
+                onClick={() => onSubscribe(vendor.address, vendor.price)}
+                className="w-full rounded-xl font-bold tracking-widest gap-2 py-5"
+              >
+                <Lock className="w-4 h-4" /> SUBSCRIBE NOW
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-emerald-400" />
+              <span className="text-[10px] text-emerald-400 font-bold uppercase">You are subscribed to this vendor.</span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 opacity-60">
+            <Shield className="w-3 h-3 text-primary" />
+            <span className="text-[9px] text-muted-foreground">
+              Skill content is <span className="text-primary font-bold">Seal-encrypted</span>.
+              5% platform fee supports continuous network monitoring.
+            </span>
+          </div>
         </div>
       </motion.div>
     </motion.div>
