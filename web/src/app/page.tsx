@@ -716,9 +716,9 @@ export default function ImmunizerDashboard() {
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.95, opacity: 0 }}
-                className="w-full max-w-4xl max-h-[90vh] overflow-hidden"
+                className="w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
               >
-                <div className="relative">
+                <div className="relative flex flex-col min-h-0 overflow-y-auto">
                   <button
                     onClick={() => setIsPublisherOpen(false)}
                     className="absolute top-4 right-4 z-10 p-2 rounded-full hover:bg-white/10 transition-colors"
@@ -824,8 +824,8 @@ function VendorPublishCard({
   const stepIndex = PUBLISH_STEPS.findIndex((s) => s.key === publishStep);
 
   return (
-    <Card className="glass neon-border rounded-3xl overflow-hidden shadow-2xl">
-      <CardHeader className="bg-primary/10 border-b border-border/50 p-6 flex flex-row items-center justify-between">
+    <Card className="glass neon-border rounded-3xl overflow-hidden shadow-2xl flex flex-col">
+      <CardHeader className="bg-primary/10 border-b border-border/50 p-6 flex flex-row items-center justify-between flex-shrink-0">
         <CardTitle className="text-xl font-bold flex items-center gap-2">
           <Terminal className="w-5 h-5 text-primary" /> PUBLISH VULNERABILITY SKILL (SEALED)
         </CardTitle>
@@ -833,7 +833,7 @@ function VendorPublishCard({
           Authorized Publisher
         </Badge>
       </CardHeader>
-      <CardContent className="p-8 space-y-6">
+      <CardContent className="p-8 space-y-6 overflow-y-auto">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-2">
             <label className="text-xs font-bold text-muted-foreground uppercase">Vulnerability Title</label>
