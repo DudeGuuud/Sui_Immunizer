@@ -11,8 +11,6 @@ import {
   Zap,
   Search,
   AlertTriangle,
-  Plus,
-  ArrowRight,
   ShieldAlert,
   Fingerprint,
   Lock,
