@@ -151,9 +151,16 @@ async function checkSubscription(): Promise<{ nftId: string; isSubscriber: boole
 }
 
 // ─── Seal Decrypt ─────────────────────────────────────────────────────────────
+/**
+ * Decrypt a Walrus blob using Seal.
+ * @param blobId        Walrus blob ID
+ * @param vendorAddress Vendor's Sui address — used as Seal identity (must match encryption)
+ * @param nftId         Agent's SubscriberNFT or VendorNFT object ID
+ * @param isSubscriber  true = SubscriberNFT, false = VendorNFT
+ */
 async function decryptSkill(
     blobId: string,
-    sealId: string,
+    vendorAddress: string,
     nftId: string,
     isSubscriber: boolean,
 ): Promise<string> {
@@ -163,13 +170,17 @@ async function decryptSkill(
     const encrypted = new Uint8Array(await res.arrayBuffer() as ArrayBuffer);
 
     // 2. Build seal_approve TX
+    // Seal identity: raw bytes of vendor address string (must match encryption)
+    const idBytes = Array.from(Buffer.from(vendorAddress));
     const sk = await getOrCreateSessionKey();
     const approveFunc = isSubscriber ? 'seal_approve_subscriber' : 'seal_approve_vendor';
     const tx = new Transaction();
     tx.moveCall({
         target: `${PACKAGE_ID}::alert::${approveFunc}`,
+        // Move: seal_approve_subscriber(id: vector<u8>, nft: &SubscriberNFT, clock: &Clock)
+        //       seal_approve_vendor(id: vector<u8>, nft: &VendorNFT)
         arguments: [
-            tx.pure.string(sealId),
+            tx.pure.vector('u8', idBytes),
             tx.object(nftId),
             ...(isSubscriber ? [tx.object('0x6')] : []),
         ],
@@ -251,11 +262,11 @@ async function handleThreat(event: {
     vendor: string;
     severity: number;
     blob_id: string;
-    skill_blob_id: string;
     nftId: string;
     isSubscriber: boolean;
 }) {
-    const { vuln_id, title, vendor, severity, blob_id, skill_blob_id, nftId, isSubscriber } = event;
+    // vendor address is the Seal identity (same as encryption side)
+    const { vuln_id, title, vendor, severity, blob_id, nftId, isSubscriber } = event;
     const workspaceDir = path.join(OPENCLAW_WORKSPACE, vuln_id);
 
     // Skip already handled
@@ -270,8 +281,9 @@ async function handleThreat(event: {
     await notifyStarted(vuln_id, title, vendor).catch(console.warn);
 
     // 2. Decrypt skill from Walrus
+    // Use vendor address as Seal identity — must match what encryptAndUpload used
     console.log('🔐 Decrypting skill from Walrus via Seal...');
-    const skillText = await decryptSkill(blob_id, skill_blob_id, nftId, isSubscriber);
+    const skillText = await decryptSkill(blob_id, vendor, nftId, isSubscriber);
     console.log(`✅ Skill decrypted (${skillText.length} chars)`);
 
     // 3. Save raw skill for audit
@@ -329,7 +341,6 @@ async function scanAndImmunize() {
             vendor: data.vendor || '0x0',
             severity: data.severity || 0,
             blob_id: blobId,
-            skill_blob_id: data.skill_blob_id || data.vuln_id,
             nftId,
             isSubscriber,
         }).catch((e) => console.error(`[ERROR] handleThreat(${data.vuln_id}):`, e));

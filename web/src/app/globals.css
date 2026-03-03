@@ -84,9 +84,55 @@
 }
 
 .neon-border {
-  @apply border-primary/50 shadow-[0_0_15px_rgba(59,130,246,0.2)];
+  @apply border-primary/50 shadow-[0_0_15px_rgba(59, 130, 246, 0.2)];
 }
 
 .neon-text {
-  @apply text-primary drop-shadow-[0_0_8px_rgba(59,130,246,0.5)];
+  @apply text-primary drop-shadow-[0_0_8px_rgba(59, 130, 246, 0.5)];
+}
+
+
+/* ─── dapp-kit ConnectButton override ──────────────────────────────────────── */
+/* Shared base for connect trigger and connected account button */
+.wallet-connect-btn button,
+.wallet-connect-btn>[data-testid='connect-button'],
+.wallet-connect-btn>button {
+  background: linear-gradient(135deg, oklch(0.6 0.25 240 / 0.8), oklch(0.55 0.22 250 / 0.8)) !important;
+  color: #fff !important;
+  font-weight: 700 !important;
+  font-size: 0.7rem !important;
+  letter-spacing: 0.1em !important;
+  text-transform: uppercase !important;
+  padding: 0.55rem 1.1rem !important;
+  border-radius: 0.75rem !important;
+  border: 1px solid oklch(0.6 0.25 240 / 0.4) !important;
+  box-shadow: 0 0 18px oklch(0.6 0.25 240 / 0.3) !important;
+  transition: all 0.2s ease !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+}
+
+.wallet-connect-btn button:hover,
+.wallet-connect-btn>button:hover {
+  box-shadow: 0 0 28px oklch(0.6 0.25 240 / 0.55) !important;
+  filter: brightness(1.12) !important;
+}
+
+/* Connected state: smaller address pill */
+.wallet-connect-btn [data-connected] button,
+.wallet-connect-btn menu button {
+  background: oklch(0.18 0.04 240 / 0.9) !important;
+  border: 1px solid oklch(0.6 0.25 240 / 0.3) !important;
+  box-shadow: 0 0 10px oklch(0.6 0.25 240 / 0.15) !important;
+  font-size: 0.65rem !important;
+}
+
+/* dapp-kit dropdown / modal theming */
+:root {
+  --dapp-kit-backdrop-color: oklch(0 0 0 / 0.7);
+  --dapp-kit-dialog-background-color: oklch(0.12 0.02 240);
+  --dapp-kit-dialog-text-color: oklch(0.95 0.01 240);
+  --dapp-kit-button-background-color: oklch(0.6 0.25 240);
+  --dapp-kit-button-foreground-color: #fff;
+  --dapp-kit-border-radius: 0.75rem;
 }

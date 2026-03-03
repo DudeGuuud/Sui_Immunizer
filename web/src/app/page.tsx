@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ShieldCheck,
@@ -21,7 +21,11 @@ import {
   Settings,
   CheckCircle,
   Loader2,
-  X
+  X,
+  ChevronRight,
+  ExternalLink,
+  Shield,
+  Building2,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -56,9 +60,27 @@ import {
 // ─── Configuration ────────────────────────────────────────────────────────────
 const PACKAGE_ID = process.env.NEXT_PUBLIC_PACKAGE_ID || '0x_IMMUNIZER';
 const REGISTRY_ID = process.env.NEXT_PUBLIC_REGISTRY_ID || '0x_REGISTRY';
+const VENDOR_REGISTRY_ID = process.env.NEXT_PUBLIC_VENDOR_REGISTRY_ID || '';
 
-// ─── Publish Steps ────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 type PublishStep = 'idle' | 'encrypting' | 'uploading' | 'publishing' | 'done' | 'error';
+type ActiveRole = 'GUEST' | 'VENDOR' | 'SUBSCRIBER';
+
+interface VulnAlertEvent {
+  txDigest: string;
+  vuln_id?: string;
+  title?: string;
+  description?: string;
+  severity?: number;
+  blob_id?: string;
+  skill_blob_id?: string;
+  vendor?: string;
+}
+
+interface VendorInfo {
+  address: string;
+  name: string;
+}
 
 const PUBLISH_STEPS: { key: PublishStep; label: string }[] = [
   { key: 'encrypting', label: 'Encrypting with Seal...' },
@@ -89,27 +111,44 @@ export default function ImmunizerDashboard() {
   const [severity, setSeverity] = useState(5);
 
   // Decrypt / View Skill state
-  const [viewingSkill, setViewingSkill] = useState<{ blobId: string; objectId: string; title: string } | null>(null);
+  const [viewingSkill, setViewingSkill] = useState<{ blobId: string; vendorAddress: string; title: string } | null>(null);
   const [decryptedContent, setDecryptedContent] = useState<string | null>(null);
   const [isDecrypting, setIsDecrypting] = useState(false);
   const [decryptError, setDecryptError] = useState<string | null>(null);
   const sessionKeyRef = useRef<SessionKey | null>(null);
 
+  // Vendor detail modal
+  const [viewingVendor, setViewingVendor] = useState<VendorInfo | null>(null);
+
   useEffect(() => { setMounted(true); }, []);
 
   // ─── Live Chain Queries ─────────────────────────────────────────────────────
+
+  // All VulnerabilityAlert events (public: title, severity, description visible to all)
   const { data: events, isLoading: eventsLoading } = useSuiClientQuery('queryEvents', {
-    query: { MoveModule: { package: PACKAGE_ID, module: 'alert' } },
+    query: { MoveEventType: `${PACKAGE_ID}::alert::VulnerabilityAlert` },
     limit: 20,
     order: 'descending',
   });
 
+  // VendorRegistered events — used to enrich vendor names
   const { data: vendorEvents } = useSuiClientQuery('queryEvents', {
     query: { MoveEventType: `${PACKAGE_ID}::alert::VendorRegistered` },
-    limit: 10,
+    limit: 50,
     order: 'descending',
   });
 
+  // VendorRegistry shared object — real on-chain vendor list
+  const { data: vendorRegistryObj } = useSuiClientQuery(
+    'getObject',
+    {
+      id: VENDOR_REGISTRY_ID,
+      options: { showContent: true },
+    },
+    { enabled: !!VENDOR_REGISTRY_ID && VENDOR_REGISTRY_ID !== '0x_REPLACE_AFTER_PUBLISH' && mounted },
+  );
+
+  // User's owned NFTs for role detection
   const { data: ownedObjects, isLoading: ownedLoading, refetch: refetchOwned } = useSuiClientQuery(
     'getOwnedObjects',
     {
@@ -126,7 +165,7 @@ export default function ImmunizerDashboard() {
   );
 
   // ─── Role Detection ─────────────────────────────────────────────────────────
-  const realRole = useMemo(() => {
+  const realRole = useMemo((): ActiveRole => {
     if (!account) return 'GUEST';
     if (ownedLoading || !ownedObjects) return 'GUEST';
     const hasVendor = ownedObjects.data.some(o => o.data?.type?.includes('VendorNFT'));
@@ -136,7 +175,62 @@ export default function ImmunizerDashboard() {
     return 'GUEST';
   }, [account, ownedObjects, ownedLoading]);
 
-  const activeRole = demoRole === 'AUTO' ? realRole : demoRole;
+  const activeRole: ActiveRole = demoRole === 'AUTO' ? realRole : demoRole;
+
+  // ─── Vendor List (enriched) ─────────────────────────────────────────────────
+  // Build vendor list: from VendorRegistry object first, fall back to events
+  const vendorList = useMemo((): VendorInfo[] => {
+    // Build name map from VendorRegistered events
+    const nameMap = new Map<string, string>();
+    vendorEvents?.data.forEach(ev => {
+      const { vendor, name } = ev.parsedJson as { vendor?: string; name?: string };
+      if (vendor) nameMap.set(vendor, name || 'Unknown Vendor');
+    });
+
+    // Try to read from VendorRegistry object (has `vendors: VecSet<address>`)
+    const content = vendorRegistryObj?.data?.content;
+    if (content && 'fields' in content) {
+      const fields = (content as { fields: Record<string, unknown> }).fields;
+      const vendorsField = fields?.vendors;
+      // VecSet<address> is stored as { contents: address[] }
+      const addresses: string[] = (vendorsField as { contents?: string[] })?.contents || [];
+      if (addresses.length > 0) {
+        return addresses.map(addr => ({
+          address: addr,
+          name: nameMap.get(addr) || `Vendor ${addr.slice(0, 6)}…`,
+        }));
+      }
+    }
+
+    // Fallback: deduplicate from events
+    const seen = new Set<string>();
+    const vendors: VendorInfo[] = [];
+    vendorEvents?.data.forEach(ev => {
+      const { vendor, name } = ev.parsedJson as { vendor?: string; name?: string };
+      if (vendor && !seen.has(vendor)) {
+        seen.add(vendor);
+        vendors.push({ address: vendor, name: name || 'Unknown Vendor' });
+      }
+    });
+    return vendors;
+  }, [vendorRegistryObj, vendorEvents]);
+
+  // Parsed vulnerability alert events
+  const parsedEvents = useMemo((): VulnAlertEvent[] => {
+    return (events?.data || []).map(ev => {
+      const j = ev.parsedJson as Record<string, unknown>;
+      return {
+        txDigest: ev.id.txDigest,
+        vuln_id: j?.vuln_id as string | undefined,
+        title: j?.title as string | undefined,
+        description: j?.description as string | undefined,
+        severity: j?.severity as number | undefined,
+        blob_id: j?.blob_id as string | undefined,
+        skill_blob_id: j?.skill_blob_id as string | undefined,
+        vendor: j?.vendor as string | undefined,
+      };
+    });
+  }, [events]);
 
   // ─── Subscription ───────────────────────────────────────────────────────────
   const [isMinting, setIsMinting] = useState(false);
@@ -175,19 +269,18 @@ export default function ImmunizerDashboard() {
       const vendorNft = ownedObjects?.data.find(o => o.data?.type?.includes('VendorNFT'))?.data?.objectId;
       if (!vendorNft) throw new Error('VendorNFT not found in wallet');
 
-      // We'll use the vendorNft objectId as the Seal identity (deterministic per vendor+skill)
-      // In a production setup you'd derive a unique ID per skill blob
-      const sealId = vendorNft;
+      // sealId = vendor's own address (stable, consistent with decrypt side)
+      const vendorAddress = account.address;
 
       // 1. Encrypt + Upload to Walrus
       const { blobId } = await encryptAndUpload(
         markdown,
         PACKAGE_ID,
-        sealId,
+        vendorAddress,
         suiClient,
         (step) => {
           if (step.includes('Encrypt')) setPublishStep('encrypting');
-          if (step.includes('Upload')) setPublishStep('uploading');
+          if (step.includes('Upload') || step.includes('Uploading')) setPublishStep('uploading');
         },
       );
 
@@ -230,10 +323,13 @@ export default function ImmunizerDashboard() {
     }
   };
 
-  // ─── View / Decrypt Skill (Subscriber / Vendor) ─────────────────────────────
-  const handleViewSkill = async (blobId: string, sealId: string, title: string) => {
+  // ─── View / Decrypt Skill (Subscriber / Vendor only) ────────────────────────
+  const handleViewSkill = useCallback(async (blobId: string, vendorAddress: string, title: string) => {
     if (!account) return;
-    setViewingSkill({ blobId, objectId: sealId, title });
+    // Only real SUBSCRIBER or VENDOR can decrypt (use realRole, not demo role)
+    if (realRole === 'GUEST') return;
+
+    setViewingSkill({ blobId, vendorAddress, title });
     setDecryptedContent(null);
     setDecryptError(null);
     setIsDecrypting(true);
@@ -257,9 +353,10 @@ export default function ImmunizerDashboard() {
       const nftId = ownedObjects?.data.find(o => o.data?.type?.includes(nftType))?.data?.objectId;
       if (!nftId) throw new Error(`${nftType} not found in wallet`);
 
+      // vendorAddress is the Seal identity used during encryption
       const plaintext = await fetchAndDecrypt(
         blobId,
-        sealId,
+        vendorAddress,
         PACKAGE_ID,
         approveFunc,
         nftId,
@@ -275,7 +372,7 @@ export default function ImmunizerDashboard() {
     } finally {
       setIsDecrypting(false);
     }
-  };
+  }, [account, realRole, ownedObjects, suiClient, signPersonalMessage]);
 
   const closeSkillModal = () => {
     setViewingSkill(null);
@@ -341,8 +438,10 @@ export default function ImmunizerDashboard() {
           </motion.div>
 
           <div className="flex items-center gap-4">
-            {/* Slush-first wallet connect button */}
-            <ConnectButton />
+            <ConnectButton
+              connectText="🔗 Connect Wallet"
+              className="wallet-connect-btn"
+            />
 
             {activeRole === 'GUEST' && account && (
               <Button
@@ -407,7 +506,7 @@ export default function ImmunizerDashboard() {
                 onPublish={handlePublishSkill}
               />
               <ThreatFeed
-                events={events}
+                events={parsedEvents}
                 isLoading={eventsLoading}
                 role={activeRole}
                 onViewSkill={handleViewSkill}
@@ -433,12 +532,13 @@ export default function ImmunizerDashboard() {
                         <p className="text-muted-foreground max-w-md">
                           Your system is not connected to the Global Threat Response Network.
                           Subscribe to receive auto-healing &quot;Skills&quot; for verified vulnerabilities.
+                          You can browse the public threat feed below — skill details are locked until you subscribe.
                         </p>
                       </div>
                     </div>
                     {account && (
-                      <Button onClick={handleSubscribe} size="lg" className="bg-amber-500 hover:bg-amber-600 font-bold rounded-xl px-10 h-14 shadow-2xl">
-                        SUBSCRIBE NOW (1 SUI)
+                      <Button onClick={handleSubscribe} size="lg" disabled={isMinting} className="bg-amber-500 hover:bg-amber-600 font-bold rounded-xl px-10 h-14 shadow-2xl">
+                        {isMinting ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Processing...</> : 'SUBSCRIBE NOW (1 SUI)'}
                       </Button>
                     )}
                   </CardContent>
@@ -448,8 +548,8 @@ export default function ImmunizerDashboard() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 {[
                   { label: 'Network Uptime', value: '99.99%', icon: Activity, color: 'text-blue-400' },
-                  { label: 'Verified Publishers', value: String(vendorEvents?.data.length || '0'), icon: Cpu, color: 'text-cyan-400' },
-                  { label: 'Skills Available', value: String(events?.data.length || '0'), icon: Zap, color: 'text-yellow-400' },
+                  { label: 'Verified Publishers', value: String(vendorList.length || '0'), icon: Cpu, color: 'text-cyan-400' },
+                  { label: 'Skills Available', value: String(parsedEvents.length), icon: Zap, color: 'text-yellow-400' },
                   { label: 'System Health', value: activeRole !== 'GUEST' ? 'SECURE' : 'UNDETECTED', icon: AlertTriangle, color: activeRole !== 'GUEST' ? 'text-emerald-400' : 'text-amber-400' },
                 ].map((stat) => (
                   <Card key={stat.label} className="glass neon-border overflow-hidden group">
@@ -464,13 +564,17 @@ export default function ImmunizerDashboard() {
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <ThreatFeed
-                  events={events}
+                  events={parsedEvents}
                   isLoading={eventsLoading}
                   role={activeRole}
                   onViewSkill={handleViewSkill}
                 />
                 <div className="space-y-6">
-                  <VendorDirectoryCard vendorEvents={vendorEvents} />
+                  <VendorDirectoryCard
+                    vendors={vendorList}
+                    isLoading={!mounted}
+                    onSelectVendor={setViewingVendor}
+                  />
                   <AgentCapabilitiesCard />
                 </div>
               </div>
@@ -488,6 +592,19 @@ export default function ImmunizerDashboard() {
             content={decryptedContent}
             error={decryptError}
             onClose={closeSkillModal}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* ── Vendor Detail Modal ─────────────────────────────────────────── */}
+      <AnimatePresence>
+        {viewingVendor && (
+          <VendorDetailModal
+            vendor={viewingVendor}
+            allEvents={parsedEvents}
+            role={activeRole}
+            onViewSkill={handleViewSkill}
+            onClose={() => setViewingVendor(null)}
           />
         )}
       </AnimatePresence>
@@ -513,7 +630,6 @@ function VendorPublishCard({
   publishStep, publishError, onPublish,
 }: VendorPublishCardProps) {
   const isPublishing = ['encrypting', 'uploading', 'publishing'].includes(publishStep);
-
   const stepIndex = PUBLISH_STEPS.findIndex(s => s.key === publishStep);
 
   return (
@@ -555,7 +671,7 @@ function VendorPublishCard({
         </div>
 
         <div className="space-y-2">
-          <label className="text-xs font-bold text-muted-foreground uppercase">Short Description (Public)</label>
+          <label className="text-xs font-bold text-muted-foreground uppercase">Short Description (Public — visible to all)</label>
           <input
             type="text"
             placeholder="Brief public summary visible to all users"
@@ -625,10 +741,10 @@ function VendorPublishCard({
 // ─── Threat Feed ──────────────────────────────────────────────────────────────
 
 interface ThreatFeedProps {
-  events: { data: Array<{ id: { txDigest: string }; parsedJson: unknown }> } | undefined;
+  events: VulnAlertEvent[];
   isLoading: boolean;
-  role: string;
-  onViewSkill: (blobId: string, objectId: string, title: string) => void;
+  role: ActiveRole;
+  onViewSkill: (blobId: string, vendorAddress: string, title: string) => void;
 }
 
 function ThreatFeed({ events, isLoading, role, onViewSkill }: ThreatFeedProps) {
@@ -643,7 +759,7 @@ function ThreatFeed({ events, isLoading, role, onViewSkill }: ThreatFeedProps) {
             <div className="flex space-x-1">
               {[0, 1, 2].map(j => <div key={j} className="w-1 h-3 bg-primary rounded-full animate-pulse" />)}
             </div>
-            <span className="text-[10px] font-bold text-primary uppercase">Listening for Vaccine Blobs...</span>
+            <span className="text-[10px] font-bold text-primary uppercase">On-Chain Events</span>
           </div>
         </div>
       </CardHeader>
@@ -653,20 +769,20 @@ function ThreatFeed({ events, isLoading, role, onViewSkill }: ThreatFeedProps) {
             <TableHeader className="bg-muted/10">
               <TableRow className="border-border/50">
                 <TableHead className="px-8 py-4 text-[10px] font-bold uppercase text-muted-foreground">Vulnerability</TableHead>
-                <TableHead className="px-8 py-4 text-[10px] font-bold uppercase text-muted-foreground">Severity</TableHead>
-                <TableHead className="px-8 py-4 text-[10px] font-bold uppercase text-muted-foreground">Status</TableHead>
-                <TableHead className="px-8 py-4 text-[10px] font-bold uppercase text-muted-foreground text-right">Action</TableHead>
+                <TableHead className="px-4 py-4 text-[10px] font-bold uppercase text-muted-foreground">Severity</TableHead>
+                <TableHead className="px-4 py-4 text-[10px] font-bold uppercase text-muted-foreground">Status</TableHead>
+                <TableHead className="px-8 py-4 text-[10px] font-bold uppercase text-muted-foreground text-right">
+                  {role === 'GUEST' ? 'Access' : 'Skill'}
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               <AnimatePresence mode="popLayout">
-                {events?.data.map((ev) => {
-                  const { vuln_id, title, severity, blob_id, skill_blob_id } =
-                    (ev.parsedJson as { vuln_id?: string; title?: string; severity?: number; blob_id?: string; skill_blob_id?: string }) || {};
-                  const canView = role !== 'GUEST' && blob_id;
+                {events.map((ev) => {
+                  const canDecrypt = role !== 'GUEST' && !!ev.blob_id && !!ev.vendor;
                   return (
                     <motion.tr
-                      key={ev.id.txDigest}
+                      key={ev.txDigest}
                       initial={{ opacity: 0, backgroundColor: 'rgba(59,130,246,0.1)' }}
                       animate={{ opacity: 1, backgroundColor: 'transparent' }}
                       className="border-border/20 hover:bg-muted/20 transition-colors"
@@ -674,19 +790,23 @@ function ThreatFeed({ events, isLoading, role, onViewSkill }: ThreatFeedProps) {
                       <TableCell className="px-8 py-5">
                         <div className="flex items-center gap-2">
                           <div>
-                            <p className="font-mono text-xs font-bold text-primary">{vuln_id || 'UNKNOWN'}</p>
-                            <p className="text-[10px] text-muted-foreground truncate max-w-[200px]">{title || 'Critical Security Patch'}</p>
+                            <p className="font-mono text-xs font-bold text-primary">{ev.vuln_id || 'UNKNOWN'}</p>
+                            <p className="text-sm font-semibold leading-tight mt-0.5">{ev.title || 'Critical Security Patch'}</p>
+                            {ev.description && (
+                              <p className="text-[10px] text-muted-foreground truncate max-w-[260px] mt-0.5">{ev.description}</p>
+                            )}
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell className="px-8 py-5">
+                      <TableCell className="px-4 py-5">
                         <div className="flex space-x-0.5">
                           {Array.from({ length: 10 }).map((_, j) => (
-                            <div key={j} className={`h-1 w-2 rounded-full ${j < (severity || 0) ? 'bg-primary shadow-[0_0_5px_rgba(59,130,246,0.5)]' : 'bg-muted'}`} />
+                            <div key={j} className={`h-1 w-2 rounded-full ${j < (ev.severity || 0) ? 'bg-primary shadow-[0_0_5px_rgba(59,130,246,0.5)]' : 'bg-muted'}`} />
                           ))}
                         </div>
+                        <span className="text-[9px] text-muted-foreground mt-1 block">{ev.severity}/10</span>
                       </TableCell>
-                      <TableCell className="px-8 py-5">
+                      <TableCell className="px-4 py-5">
                         <Badge
                           variant="outline"
                           className={`text-[9px] font-black uppercase ${role !== 'GUEST' ? 'border-emerald-500/30 text-emerald-400' : 'border-amber-500/30 text-amber-400'
@@ -696,17 +816,20 @@ function ThreatFeed({ events, isLoading, role, onViewSkill }: ThreatFeedProps) {
                         </Badge>
                       </TableCell>
                       <TableCell className="px-8 py-5 text-right">
-                        {canView ? (
+                        {canDecrypt ? (
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => onViewSkill(blob_id!, skill_blob_id || '', title || 'Skill')}
+                            onClick={() => onViewSkill(ev.blob_id!, ev.vendor!, ev.title || 'Skill')}
                             className="text-[10px] font-bold hover:text-primary transition-all group flex items-center ml-auto gap-2"
                           >
                             <Eye className="w-3 h-3" /> VIEW SKILL
                           </Button>
                         ) : (
-                          <Lock className="w-3 h-3 text-muted-foreground ml-auto" />
+                          <div className="flex items-center justify-end gap-1.5 text-muted-foreground">
+                            <Lock className="w-3 h-3" />
+                            <span className="text-[9px] uppercase font-bold">Subscribe</span>
+                          </div>
                         )}
                       </TableCell>
                     </motion.tr>
@@ -715,10 +838,17 @@ function ThreatFeed({ events, isLoading, role, onViewSkill }: ThreatFeedProps) {
                 {isLoading && [1, 2, 3].map(i => (
                   <TableRow key={i} className="border-border/20 opacity-50">
                     <TableCell colSpan={4} className="px-8 py-10 text-center animate-pulse text-xs uppercase tracking-widest text-muted-foreground">
-                      Searching network for new vaccines...
+                      Scanning chain for threats...
                     </TableCell>
                   </TableRow>
                 ))}
+                {!isLoading && events.length === 0 && (
+                  <TableRow className="border-border/20">
+                    <TableCell colSpan={4} className="px-8 py-10 text-center text-xs text-muted-foreground italic">
+                      No vulnerability alerts found. The network is quiet.
+                    </TableCell>
+                  </TableRow>
+                )}
               </AnimatePresence>
             </TableBody>
           </Table>
@@ -730,39 +860,189 @@ function ThreatFeed({ events, isLoading, role, onViewSkill }: ThreatFeedProps) {
 
 // ─── Vendor Directory Card ────────────────────────────────────────────────────
 
-function VendorDirectoryCard({ vendorEvents }: { vendorEvents: { data: Array<{ parsedJson: unknown }> } | undefined }) {
+interface VendorDirectoryCardProps {
+  vendors: VendorInfo[];
+  isLoading: boolean;
+  onSelectVendor: (vendor: VendorInfo) => void;
+}
+
+function VendorDirectoryCard({ vendors, isLoading, onSelectVendor }: VendorDirectoryCardProps) {
   return (
     <Card className="glass neon-border rounded-3xl overflow-hidden shadow-2xl">
       <CardHeader className="bg-primary/5 border-b border-border/50 p-6">
         <CardTitle className="text-base font-bold flex items-center gap-2">
           <Users className="w-4 h-4 text-primary" /> TRUSTED PUBLISHERS
+          <Badge variant="outline" className="ml-auto text-[9px] border-primary/20 text-primary">
+            {vendors.length} on-chain
+          </Badge>
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-6">
-        <div className="space-y-4">
-          {vendorEvents?.data.map((ev, i) => {
-            const { name, vendor } = ev.parsedJson as { name?: string; vendor?: string };
-            return (
-              <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-muted/10 border border-border/20 group hover:border-primary/30 transition-all">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center font-bold text-xs text-primary">
-                    {name?.[0] || 'V'}
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold leading-none mb-1">{name || 'Unnamed Vendor'}</p>
-                    <p className="text-[9px] font-mono text-muted-foreground truncate w-24">{vendor}</p>
-                  </div>
+      <CardContent className="p-4">
+        <div className="space-y-2">
+          {isLoading && (
+            <div className="flex items-center justify-center py-6">
+              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+            </div>
+          )}
+          {vendors.map((v) => (
+            <button
+              key={v.address}
+              onClick={() => onSelectVendor(v)}
+              className="w-full flex items-center justify-between p-3 rounded-xl bg-muted/10 border border-border/20 group hover:border-primary/30 hover:bg-primary/5 transition-all text-left"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center font-bold text-xs text-primary flex-shrink-0">
+                  {v.name?.[0]?.toUpperCase() || 'V'}
                 </div>
-                <Badge className="bg-emerald-500/10 text-emerald-400 text-[8px] border-none uppercase">Verified</Badge>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold leading-none mb-1 truncate">{v.name}</p>
+                  <p className="text-[9px] font-mono text-muted-foreground truncate w-28">{v.address}</p>
+                </div>
               </div>
-            );
-          })}
-          {(!vendorEvents || vendorEvents.data.length === 0) && (
-            <p className="text-[10px] text-center py-4 text-muted-foreground italic">No publishers registered yet.</p>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <Badge className="bg-emerald-500/10 text-emerald-400 text-[8px] border-none uppercase">Verified</Badge>
+                <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:text-primary transition-colors" />
+              </div>
+            </button>
+          ))}
+          {!isLoading && vendors.length === 0 && (
+            <p className="text-[10px] text-center py-6 text-muted-foreground italic">No publishers registered yet.</p>
           )}
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// ─── Vendor Detail Modal ──────────────────────────────────────────────────────
+
+interface VendorDetailModalProps {
+  vendor: VendorInfo;
+  allEvents: VulnAlertEvent[];
+  role: ActiveRole;
+  onViewSkill: (blobId: string, vendorAddress: string, title: string) => void;
+  onClose: () => void;
+}
+
+function VendorDetailModal({ vendor, allEvents, role, onViewSkill, onClose }: VendorDetailModalProps) {
+  // Filter events to only this vendor's skills
+  const vendorSkills = allEvents.filter(ev => ev.vendor === vendor.address);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-md"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="glass neon-border rounded-3xl overflow-hidden w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-border/50 bg-primary/5">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-primary/20 rounded-xl">
+              <Building2 className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <h3 className="font-black text-base">{vendor.name}</h3>
+              <p className="text-[10px] font-mono text-muted-foreground">{vendor.address}</p>
+            </div>
+            <Badge className="bg-emerald-500/10 text-emerald-400 text-[8px] border-none uppercase ml-2">Verified Publisher</Badge>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-xl hover:bg-muted/30 transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <ScrollArea className="flex-1">
+          <div className="p-6 space-y-4">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Published Skills</h4>
+              <Badge variant="outline" className="text-[9px] border-border/30">
+                {vendorSkills.length} total
+              </Badge>
+            </div>
+
+            {vendorSkills.length === 0 && (
+              <div className="text-center py-10 text-muted-foreground">
+                <Shield className="w-10 h-10 mx-auto mb-3 opacity-20" />
+                <p className="text-xs italic">No skills published by this vendor yet.</p>
+              </div>
+            )}
+
+            {vendorSkills.map((skill) => (
+              <div
+                key={skill.txDigest}
+                className="p-4 rounded-2xl bg-muted/10 border border-border/20 hover:border-primary/20 transition-all"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-mono text-[10px] text-primary font-bold">{skill.vuln_id || 'VULN'}</span>
+                      <div className="flex space-x-0.5">
+                        {Array.from({ length: 10 }).map((_, j) => (
+                          <div key={j} className={`h-1 w-1.5 rounded-full ${j < (skill.severity || 0) ? 'bg-primary' : 'bg-muted'}`} />
+                        ))}
+                      </div>
+                      <span className="text-[9px] text-muted-foreground">{skill.severity}/10</span>
+                    </div>
+                    <p className="font-semibold text-sm leading-tight">{skill.title || 'Unknown Vulnerability'}</p>
+                    {skill.description && (
+                      <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2">{skill.description}</p>
+                    )}
+                  </div>
+
+                  {/* Action: GUEST sees lock, SUBSCRIBER/VENDOR sees decrypt button */}
+                  <div className="flex-shrink-0">
+                    {role !== 'GUEST' && skill.blob_id && skill.vendor ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          onClose();
+                          onViewSkill(skill.blob_id!, skill.vendor!, skill.title || 'Skill');
+                        }}
+                        className="text-[10px] font-bold border-primary/30 hover:bg-primary/10 flex items-center gap-1.5"
+                      >
+                        <Eye className="w-3 h-3" />
+                        VIEW SKILL
+                      </Button>
+                    ) : role === 'GUEST' ? (
+                      <div className="flex flex-col items-center gap-1">
+                        <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                          <Lock className="w-4 h-4 text-amber-500" />
+                        </div>
+                        <span className="text-[8px] text-muted-foreground uppercase">Subscribe</span>
+                      </div>
+                    ) : (
+                      <div className="p-2 rounded-lg bg-muted/20">
+                        <ExternalLink className="w-4 h-4 text-muted-foreground" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </ScrollArea>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-border/50 bg-muted/10 flex items-center gap-2">
+          <Shield className="w-4 h-4 text-primary" />
+          <span className="text-[10px] text-muted-foreground">
+            Skill content is <span className="text-primary font-bold">Seal-encrypted</span> on Walrus.
+            {role === 'GUEST' && ' Subscribe to unlock full skill details and remediation guides.'}
+          </span>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -779,10 +1059,10 @@ function AgentCapabilitiesCard() {
       <CardContent className="p-6 space-y-6">
         <ul className="space-y-4">
           {[
-            { title: 'Sui Event Watcher', desc: 'Real-time vulnerability detection' },
-            { title: 'Seal Decryption', desc: 'Private-key SessionKey, no wallet interaction' },
-            { title: 'Walrus Blob Fetch', desc: 'Download encrypted skill payloads' },
-            { title: 'Skill Execution Engine', desc: 'Automated patch application' },
+            { title: 'Sui Event Watcher', desc: 'Real-time vulnerability detection from on-chain events' },
+            { title: 'Seal Decryption', desc: 'SessionKey-based, no repeated wallet interactions' },
+            { title: 'Walrus Blob Fetch', desc: 'Fetch encrypted skill payloads from decentralized storage' },
+            { title: 'OpenClaw AI Execution', desc: 'Automated patch application via embedded AI agent' },
           ].map((item, i) => (
             <li key={i} className="flex gap-3">
               <div className="mt-1 flex-shrink-0 w-4 h-4 rounded-full bg-primary/20 flex items-center justify-center">
@@ -803,7 +1083,7 @@ function AgentCapabilitiesCard() {
 // ─── Skill Viewer Modal ───────────────────────────────────────────────────────
 
 interface SkillViewerModalProps {
-  skill: { blobId: string; objectId: string; title: string };
+  skill: { blobId: string; vendorAddress: string; title: string };
   isDecrypting: boolean;
   content: string | null;
   error: string | null;
@@ -834,7 +1114,7 @@ function SkillViewerModal({ skill, isDecrypting, content, error, onClose }: Skil
             </div>
             <div>
               <h3 className="font-black text-base">{skill.title}</h3>
-              <p className="text-[10px] font-mono text-muted-foreground truncate max-w-xs">{skill.blobId}</p>
+              <p className="text-[10px] font-mono text-muted-foreground truncate max-w-xs">blob: {skill.blobId}</p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 rounded-xl hover:bg-muted/30 transition-colors">

@@ -7,6 +7,12 @@
  *   encryptAndUpload       Seal-encrypt + Walrus PUT
  *   fetchAndDecrypt        Walrus GET + Seal decrypt
  *   createAndInitSessionKey  Build + sign a Seal SessionKey
+ *
+ * SealId convention (IMPORTANT):
+ *   We use the VENDOR ADDRESS (0x…) as the Seal identity for every skill blob
+ *   published by that vendor. This is stable, requires no extra event fields,
+ *   and means all skills from the same vendor share the same Seal access key.
+ *   Both encrypt and decrypt must use the same vendor address string.
  */
 
 import { SealClient, SessionKey } from '@mysten/seal';
@@ -46,15 +52,23 @@ function newSealClient(suiClient: any): SealClient {
     return new SealClient({
         suiClient,
         serverConfigs: SEAL_SERVER_CONFIGS,
-        verifyKeyServers: false,
+        verifyKeyServers: false, // OK for testnet
     } as any);
 }
 
+/**
+ * Upload raw bytes to Walrus. Returns blobId.
+ * Uses native Fetch API (browser + Node.js compatible).
+ */
 async function walrusPut(data: Uint8Array): Promise<string> {
     const res = await fetch(
         `${WALRUS_PUBLISHER}/v1/blobs?epochs=${STORAGE_EPOCHS}`,
-        { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: Buffer.from(data) },
-
+        {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            // Cast to BodyInit — Uint8Array is valid but TS strict types need the cast
+            body: data as unknown as BodyInit,
+        },
     );
     if (!res.ok)
         throw new Error(`Walrus upload failed: ${res.status} ${res.statusText}`);
@@ -83,22 +97,26 @@ export interface EncryptUploadResult { blobId: string }
  * Encrypt skill.md with Seal and upload to Walrus.
  * @param plaintext  skill.md markdown content
  * @param packageId  Immunizer package ID (0x…)
- * @param sealId     Seal identity – VendorNFT object ID
+ * @param vendorAddress  Vendor's Sui address — used as Seal identity (MUST match decrypt)
  * @param suiClient  live @mysten/dapp-kit client
  * @param onProgress optional step callback for UI
  */
 export async function encryptAndUpload(
     plaintext: string,
     packageId: string,
-    sealId: string,
+    vendorAddress: string,
     suiClient: any,
     onProgress?: (step: string) => void,
 ): Promise<EncryptUploadResult> {
     onProgress?.('Encrypting with Seal…');
+
+    // Seal identity: raw bytes of the vendor address string
+    const idBytes = new TextEncoder().encode(vendorAddress);
+
     const { encryptedObject } = await newSealClient(suiClient).encrypt({
         threshold: 2,
         packageId,
-        id: sealId,
+        id: idBytes as unknown as string, // Seal SDK types id as string, but accepts bytes
         data: new TextEncoder().encode(plaintext),
     });
 
@@ -123,25 +141,26 @@ export async function createAndInitSessionKey(
     suiClient: any,
     signFn: SignPersonalMessageFn,
 ): Promise<SessionKey> {
-    const sk = await SessionKey.create({ address, packageId, ttlMin: 10, suiClient });
-    const { signature } = await signFn({ message: sk.getPersonalMessage() });
-    await sk.setPersonalMessageSignature(signature);
+    const sk = await SessionKey.create({ address, packageId, ttlMin: 10, suiClient } as any);
+    const msgBytes: Uint8Array = sk.getPersonalMessage();
+    const { signature } = await signFn({ message: msgBytes });
+    await sk.setPersonalMessageSignature(signature as string);
     return sk;
 }
 
 /**
  * Download an encrypted Walrus blob and Seal-decrypt it.
- * @param blobId       Walrus blob ID
- * @param sealId       Seal identity used during encryption
- * @param packageId    Immunizer package ID
- * @param moduleFunc   Which seal_approve_* to call
- * @param nftObjectId  Subscriber or Vendor NFT object ID
- * @param sessionKey   Initialized SessionKey
- * @param suiClient    live client
+ * @param blobId         Walrus blob ID
+ * @param vendorAddress  Vendor's Sui address (same value used during encryption)
+ * @param packageId      Immunizer package ID
+ * @param moduleFunc     Which seal_approve_* to call
+ * @param nftObjectId    Subscriber or Vendor NFT object ID
+ * @param sessionKey     Initialized SessionKey
+ * @param suiClient      live client
  */
 export async function fetchAndDecrypt(
     blobId: string,
-    sealId: string,
+    vendorAddress: string,
     packageId: string,
     moduleFunc: 'seal_approve_subscriber' | 'seal_approve_vendor',
     nftObjectId: string,
@@ -150,12 +169,17 @@ export async function fetchAndDecrypt(
 ): Promise<string> {
     const encrypted = await walrusGet(blobId);
 
+    // Seal identity must match what was used during encryption
+    const idBytes = new TextEncoder().encode(vendorAddress);
+
     const tx = new Transaction();
     tx.moveCall({
         target: `${packageId}::alert::${moduleFunc}`,
+        // Move contract: seal_approve_subscriber(id: vector<u8>, nft: &SubscriberNFT, clock: &Clock)
+        //                seal_approve_vendor(id: vector<u8>, nft: &VendorNFT)
         arguments: moduleFunc === 'seal_approve_subscriber'
-            ? [tx.pure.string(sealId), tx.object(nftObjectId), tx.object('0x6')]
-            : [tx.pure.string(sealId), tx.object(nftObjectId)],
+            ? [tx.pure.vector('u8', Array.from(idBytes)), tx.object(nftObjectId), tx.object('0x6')]
+            : [tx.pure.vector('u8', Array.from(idBytes)), tx.object(nftObjectId)],
     });
     const txBytes = await tx.build({ client: suiClient, onlyTransactionKind: true });
 

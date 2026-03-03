@@ -1,6 +1,6 @@
 # Sui Immunizer 🛡️
 
-> **Decentralized, AI-powered vulnerability response** — Powered by [Seal](https://seal.xyz) + [Walrus](https://walrus.site) + [Sui](https://sui.io) + [OpenClaw](https://openclaw.ai)
+> **Decentralized, AI-powered vulnerability response** — Powered by [Seal](https://seal.mystenlabs.com/) + [Walrus](https://walrus.site) + [Sui](https://sui.io) + [OpenClaw](https://openclaw.ai)
 
 ---
 
