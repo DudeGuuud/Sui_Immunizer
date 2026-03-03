@@ -16,7 +16,7 @@ export function Providers({ children }: { children: ReactNode }) {
     return (
         <QueryClientProvider client={queryClient}>
             <SuiClientProvider networks={networkConfig} defaultNetwork="testnet">
-                <WalletProvider autoConnect>
+                <WalletProvider autoConnect preferredWallets={['Slush Wallet', 'Sui Wallet']}>
                     {children}
                 </WalletProvider>
             </SuiClientProvider>

@@ -5,6 +5,7 @@
     "": {
       "name": "sui-immunizer",
       "dependencies": {
+        "@mysten/seal": "^1.1.0",
         "tweetnacl": "^1.0.3",
       },
       "devDependencies": {
@@ -39,6 +40,8 @@
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.9", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.0.3", "@jridgewell/sourcemap-codec": "^1.4.10" } }, "sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ=="],
 
     "@mysten/bcs": ["@mysten/bcs@2.0.2", "", { "dependencies": { "@mysten/utils": "^0.3.1", "@scure/base": "^2.0.0" } }, "sha512-c/nVRPJEV1fRZdKXhysVsy/yCPdiFt7jn6A4/7W2LH1ZPSVPzRkxtLY362D0zaLuBnyT5Y9d9nFLm3ixI8Goug=="],
+
+    "@mysten/seal": ["@mysten/seal@1.1.0", "", { "dependencies": { "@mysten/bcs": "^2.0.2", "@noble/curves": "^2.0.1", "@noble/hashes": "^2.0.1" }, "peerDependencies": { "@mysten/sui": "^2.5.0" } }, "sha512-EXNBRCApmfhI2KPnYIUI8AxYzg/RAv49yzZZ1BX0CzAIKeXUfqd1Bj1sK7/VNem2/gPaYJYRFsUfVvEZXIp1lw=="],
 
     "@mysten/sui": ["@mysten/sui@2.4.0", "", { "dependencies": { "@graphql-typed-document-node/core": "^3.2.0", "@mysten/bcs": "^2.0.2", "@mysten/utils": "^0.3.1", "@noble/curves": "^2.0.1", "@noble/hashes": "^2.0.1", "@protobuf-ts/grpcweb-transport": "^2.11.1", "@protobuf-ts/runtime": "^2.11.1", "@protobuf-ts/runtime-rpc": "^2.11.1", "@scure/base": "^2.0.0", "@scure/bip32": "^2.0.1", "@scure/bip39": "^2.0.1", "gql.tada": "^1.9.0", "graphql": "^16.12.0", "poseidon-lite": "0.2.1", "valibot": "^1.2.0" } }, "sha512-2EG5+lTypWMgU3lWyKlcjopQ++Ae9BkoROOBVcJ6mYwM5o1IcKnoc7rFqr94KQClYmBFV2aFz5+aKm5okatoBw=="],
 
