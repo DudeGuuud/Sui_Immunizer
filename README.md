@@ -238,6 +238,52 @@ Events:
 
 ---
 
+
+## ⚙️ Manual Cronjob Deployment (Subscriber)
+
+To enable your server with automated vulnerability discovery and remediation, you need to deploy the `Sui-Immunizer` agent.
+
+### 1. Clone the Repository
+Clone the project to your local server:
+```bash
+git clone https://github.com/DudeGuuud/Sui_Immunizer.git
+cd Sui_Immunizer
+bun install
+```
+
+### 2. Configuration
+Create and configure the `.env` file in the root directory:
+```bash
+cp env.example .env
+```
+**Key entries:**
+- `SUI_MNEMONIC`: Your subscriber account mnemonic (must hold a `SubscriberNFT`).
+- `OPENCLAW_WORKSPACE`: Temporary directory for OpenClaw execution (e.g., `/home/user/.openclaw/workspace/immunizer`).
+- `OPENCLAW_PROVIDER`: Your AI model provider (e.g., `anthropic`).
+
+### 3. Scheduling via OpenClaw (Recommended)
+OpenClaw supports **Natural Language Cron** scheduling. You don't need to write complex crontab strings; simply describe the task in plain English within your OpenClaw Dashboard's Cron section.
+
+**Recommended NL Prompt:**
+> "Run the Sui-Immunizer agent once every 12 hours. Command: cd /your/path/to/Sui_Immunizer && /usr/local/bin/bun run agent"
+
+**Why 12 hours?**
+A twice-daily scan (12-hour interval) provides a balanced security posture, offering timely protection against new threats while minimizing unnecessary server load.
+
+### 4. Manual Linux Crontab (Optional)
+If you prefer a traditional crontab, run `crontab -e` and add:
+```bash
+0 */12 * * * cd /your/path/to/Sui_Immunizer && /usr/local/bin/bun run agent >> ./agent.log 2>&1
+```
+> [!TIP]
+> Use `which bun` to find the absolute path of Bun on your system and ensure the cron command uses it. You can also use the `scripts/install-cron.sh` script to install the cronjob automatically. Other package managers should also be fine.
+
+### 5. Workflow Logic
+1. **Auto-Scan**: The scheduler triggers `src/agent.ts`.
+2. **Secure Decryption**: Upon detection of a `VulnerabilityAlert`, the agent decrypts the `skill.md` using the **Seal** protocol.
+3. **AI Execution**: The agent passes the skill to **OpenClaw**. OpenClaw parses the guide and attempts to detect/patch the vulnerability on your system.
+4. **Proof of Immunization**: All results are written back to the Sui blockchain via a `report_immunization` event, serving as an immutable proof of system health.
+
 ## License
 
 MIT

@@ -21,6 +21,7 @@ import { SealClient, SessionKey } from '@mysten/seal';
 // openclaw is installed on the subscriber's server at runtime
 // @ts-expect-error — not installed yet, will be at deploy time
 import { runEmbeddedPiAgent } from 'openclaw/agents/pi-embedded-runner.js';
+import { fromHex } from '@mysten/bcs';
 import fetch from 'node-fetch';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -170,8 +171,8 @@ async function decryptSkill(
     const encrypted = new Uint8Array(await res.arrayBuffer() as ArrayBuffer);
 
     // 2. Build seal_approve TX
-    // Seal identity: raw bytes of vendor address string (must match encryption)
-    const idBytes = Array.from(Buffer.from(vendorAddress));
+    // Seal identity: Hex bytes of vendor address (must match encryption side)
+    const idBytes = Array.from(fromHex(vendorAddress));
     const sk = await getOrCreateSessionKey();
     const approveFunc = isSubscriber ? 'seal_approve_subscriber' : 'seal_approve_vendor';
     const tx = new Transaction();
@@ -357,10 +358,7 @@ async function main() {
     fs.mkdirSync(OPENCLAW_WORKSPACE, { recursive: true });
 
     await scanAndImmunize();
-
-    setInterval(async () => {
-        await scanAndImmunize().catch((e) => console.error('[CRON ERROR]', e));
-    }, SCAN_INTERVAL);
+    console.log('🏁 Execution cycle complete. Exiting.');
 }
 
 main().catch((e) => {
