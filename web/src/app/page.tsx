@@ -273,7 +273,7 @@ export default function ImmunizerDashboard() {
 
   // ─── Vendor Registration ────────────────────────────────────────────────────
   const [isRegistering, setIsRegistering] = useState(false);
-  const handleRegisterVendor = async (name: string, desc: string) => {
+  const handleRegisterVendor = async (name: string, desc: string, recipientAddress?: string) => {
     if (!account || !ADMIN_CAP_ID) return;
     setIsRegistering(true);
     try {
@@ -288,7 +288,7 @@ export default function ImmunizerDashboard() {
           tx.object(VENDOR_REGISTRY_ID),
           tx.pure.string(name),
           tx.pure.string(desc),
-          tx.pure.address(account.address),
+          tx.pure.address(recipientAddress || account.address),
         ],
       });
 
@@ -774,6 +774,8 @@ export default function ImmunizerDashboard() {
               onClose={() => setIsOnboarding(false)}
               onRegister={handleRegisterVendor}
               isRegistering={isRegistering}
+              isAdmin={ownedObjects?.data.some(o => o.data?.type?.includes('AdminCap')) || false}
+              currentAddress={account?.address}
             />
           )}
         </AnimatePresence>
@@ -1499,13 +1501,16 @@ function SkillViewerModal({ skill, isDecrypting, content, error, onClose }: Skil
 
 interface PublisherOnboardingModalProps {
   onClose: () => void;
-  onRegister: (name: string, desc: string) => void;
+  onRegister: (name: string, desc: string, recipientAddress?: string) => void;
   isRegistering: boolean;
+  isAdmin?: boolean;
+  currentAddress?: string;
 }
 
-function PublisherOnboardingModal({ onClose, onRegister, isRegistering }: PublisherOnboardingModalProps) {
+function PublisherOnboardingModal({ onClose, onRegister, isRegistering, isAdmin, currentAddress }: PublisherOnboardingModalProps) {
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
+  const [targetAddress, setTargetAddress] = useState('');
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-md" onClick={onClose}>
@@ -1545,11 +1550,28 @@ function PublisherOnboardingModal({ onClose, onRegister, isRegistering }: Publis
               className="w-full bg-muted/20 border border-white/10 rounded-xl p-3 text-sm focus:outline-none focus:border-primary/50 resize-none"
             />
           </div>
+
+          {isAdmin && (
+            <div className="space-y-1.5 pt-2 border-t border-white/5">
+              <div className="flex items-center gap-2 pl-1 mb-1">
+                <ShieldCheck className="w-3 h-3 text-primary" />
+                <label className="text-[10px] font-black uppercase text-primary tracking-widest leading-none">Admin: Target Recipient Address</label>
+              </div>
+              <input
+                type="text"
+                placeholder={currentAddress || "0x..."}
+                value={targetAddress}
+                onChange={(e) => setTargetAddress(e.target.value)}
+                className="w-full bg-primary/5 border border-primary/20 rounded-xl p-3 text-sm font-mono focus:outline-none focus:border-primary/50 placeholder:opacity-30"
+              />
+              <p className="text-[9px] text-muted-foreground pl-1 italic">Leave empty to register yourself.</p>
+            </div>
+          )}
         </div>
 
         <div className="pt-2">
           <Button
-            onClick={() => onRegister(name, desc)}
+            onClick={() => onRegister(name, desc, targetAddress || undefined)}
             disabled={!name || !desc || isRegistering}
             className="w-full bg-primary hover:bg-primary/80 neon-border font-bold rounded-xl h-12 text-sm shadow-xl"
           >
