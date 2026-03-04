@@ -264,8 +264,8 @@ cp env.example .env
 ### 3. Scheduling via OpenClaw (Recommended)
 OpenClaw supports **Natural Language Cron** scheduling. You don't need to write complex crontab strings; simply describe the task in plain English within your OpenClaw Dashboard's Cron section.
 
-**Recommended NL Prompt:**
-> "Run the Sui-Immunizer agent once every 12 hours. Command: cd /your/path/to/Sui_Immunizer && /usr/local/bin/bun run agent"
+**Recommended Assistant Task Prompt:**
+> Go to the directory `~/openclaw/workspace/sui-immunizer`. Run `/home/linuxuser/.bun/bin/bun run agent` to check for new security alerts. The agent will download decrypted "Digital Vaccine" skills to: `/home/linuxuser/.openclaw/workspace/immunizer/[VULN-ID]/skill.md` If new vulnerability folders are found in that path, analyze the `skill.md` and execute the immunization logic(such logic can be patch describtions, security check list) as described inside in your workspace. Summarize the final system status (e.g., 'System Healthy' or 'Immunization Complete'). If any errors occur, log them clearly.
 
 **Why 12 hours?**
 A twice-daily scan (12-hour interval) provides a balanced security posture, offering timely protection against new threats while minimizing unnecessary server load.
@@ -276,7 +276,7 @@ If you prefer a traditional crontab, run `crontab -e` and add:
 0 */12 * * * cd /your/path/to/Sui_Immunizer && /usr/local/bin/bun run agent >> ./agent.log 2>&1
 ```
 > [!TIP]
-> Use `which bun` to find the absolute path of Bun on your system and ensure the cron command uses it. You can also use the `scripts/install-cron.sh` script to install the cronjob automatically. Other package managers should also be fine.
+> Use `which bun` to find the absolute path of Bun on your system and ensure the cron command uses it. You can also use the `scripts/install-cron.sh` script to install the cronjob automatically. Other package managers should also be fine. You may need to adjust the prompt to match your system environment.
 
 ### 5. Workflow Logic
 1. **Auto-Scan**: The scheduler triggers `src/agent.ts`.
@@ -287,4 +287,3 @@ If you prefer a traditional crontab, run `crontab -e` and add:
 ## License
 
 MIT
-

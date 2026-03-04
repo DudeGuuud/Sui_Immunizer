@@ -20,14 +20,21 @@ import { Transaction } from '@mysten/sui/transactions';
 import { SealClient, SessionKey } from '@mysten/seal';
 // openclaw is installed on the subscriber's server at runtime
 // @ts-expect-error — not installed yet, will be at deploy time
-import { runEmbeddedPiAgent } from 'openclaw/agents/pi-embedded-runner.js';
+import { runEmbeddedPiAgent } from '../node_modules/openclaw/dist/extensionAPI.js';
 import { fromHex } from '@mysten/bcs';
 import fetch from 'node-fetch';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
+import * as os from 'os';
 
-dotenv.config();
+// Fix: Load .env from project root regardless of where the script is started
+dotenv.config({ path: path.resolve(import.meta.dir, '../.env') });
+
+if (!process.env.SUI_MNEMONIC) {
+    console.error('❌ FATAL: SUI_MNEMONIC is not defined in .env');
+    process.exit(1);
+}
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const SUI_NETWORK = (process.env.SUI_NETWORK as 'testnet' | 'mainnet') || 'testnet';
@@ -38,11 +45,20 @@ const WALRUS_AGGREGATOR = process.env.WALRUS_AGGREGATOR_URL
     || 'https://aggregator.walrus-testnet.walrus.space';
 
 // OpenClaw workspace for this agent's sessions
-const OPENCLAW_WORKSPACE = process.env.OPENCLAW_WORKSPACE
-    || path.join(process.env.HOME || '~', '.openclaw/workspace/immunizer');
+const rawWorkspace = process.env.OPENCLAW_WORKSPACE || '~/.openclaw/workspace/immunizer';
+const OPENCLAW_WORKSPACE = rawWorkspace.startsWith('~/')
+    ? path.join(os.homedir(), rawWorkspace.slice(2))
+    : path.resolve(rawWorkspace);
 
 // Notification channel sender key (e.g. user's WhatsApp number / Telegram ID)
 const NOTIFY_SESSION_KEY = process.env.OPENCLAW_NOTIFY_SESSION_KEY || 'main:telegram:immunizer';
+
+// Decoupling toggle: if false, agent only fetches and decrypts skill.md
+const OPENCLAW_AUTO_EXECUTE = process.env.OPENCLAW_AUTO_EXECUTE === 'true';
+const OPENCLAW_PROVIDER = process.env.OPENCLAW_PROVIDER;
+const OPENCLAW_MODEL = process.env.OPENCLAW_MODEL;
+const OPENCLAW_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const OPENCLAW_PACKAGE_DIR = path.resolve(import.meta.dir, '../node_modules/openclaw');
 
 // ─── Seal Testnet Key Servers (Mysten Labs Open Mode) ─────────────────────────
 // Override via SEAL_KEY_SERVER_1 / SEAL_KEY_SERVER_2 in .env
@@ -195,63 +211,60 @@ async function decryptSkill(
 
 // ─── OpenClaw Execution ───────────────────────────────────────────────────────
 
-/**
- * Dispatch the decrypted skill.md to OpenClaw's embedded AI agent.
- * The agent will read the tutorial, check if the vulnerability exists,
- * apply fixes, and return a text summary.
- */
 async function executeSkillWithAI(
+    skill: any,
     skillText: string,
-    vulnId: string,
     workspaceDir: string,
 ): Promise<{ vulnerabilityFound: boolean; summary: string }> {
     const agentDir = path.join(workspaceDir, '.immunizer-agent');
     fs.mkdirSync(agentDir, { recursive: true });
 
-    const sessionFile = path.join(agentDir, `${vulnId}-session.jsonl`);
-
-    // Craft the immunization prompt
-    const prompt = `
-You are an automated security immunization agent running on a protected server.
-You have just received the following vulnerability detection and remediation guide from a trusted security vendor.
-
-Your job:
-1. Read the guide carefully.
-2. Check if this vulnerability EXISTS on this system using the described detection method.
-3. If the vulnerability IS present: apply the remediation steps described.
-4. Report your findings concisely at the end.
-
---- SKILL.MD BEGINS ---
-${skillText}
---- SKILL.MD ENDS ---
-
-After completing all steps, output a final summary starting with either:
-- "VULNERABILITY CONFIRMED AND PATCHED:" followed by what you found and fixed.
-- "SYSTEM HEALTHY:" followed by evidence that the vulnerability does not apply.
-`.trim();
-
+    const sessionFile = path.join(agentDir, `${skill.vuln_id}-session.jsonl`);
     let summary = '';
     let vulnerabilityFound = false;
 
-    await runEmbeddedPiAgent({
-        sessionId: `immunizer-${vulnId}`,
-        sessionKey: NOTIFY_SESSION_KEY,
-        sessionFile,
-        workspaceDir,
-        config: {}, // picks up ~/.openclaw/openclaw.json automatically
-        prompt,
-        provider: (process.env.OPENCLAW_PROVIDER as any) || 'anthropic',
-        model: process.env.OPENCLAW_MODEL || 'claude-sonnet-4-20250514',
-        timeoutMs: 5 * 60 * 1000, // 5 minute timeout
-        runId: `immunizer-${vulnId}-${Date.now()}`,
-        onBlockReply: async (payload: { text: string }) => {
-            summary += payload.text + '\n';
-            // Detect from agent's final summary whether vuln was found
-            if (/VULNERABILITY CONFIRMED/i.test(payload.text)) {
-                vulnerabilityFound = true;
-            }
-        },
-    });
+    console.log(`🤖 Triggering OpenClaw execution for ${skill.vuln_id}...`);
+    try {
+        await runEmbeddedPiAgent({
+            sessionId: `immunizer-${skill.vuln_id}`,
+            sessionKey: NOTIFY_SESSION_KEY,
+            sessionFile,
+            workspaceDir,
+            agentDir: OPENCLAW_PACKAGE_DIR,
+            config: {}, // picks up ~/.openclaw/openclaw.json automatically
+            prompt: `
+[IMMUNIZATION MISSION]
+Vulnerability ID: ${skill.vuln_id}
+Severity Level: ${skill.severity}/10
+Description: ${skill.title || skill.description}
+
+MISSION: Carefully analyze the provided skill document and execute the necessary detection and remediation steps on this local system. 
+You are authorized to use shell commands (bash) to check system state and apply patches.
+NOTE: If you need to run 'bun', always use its absolute path: /home/linuxuser/.bun/bin/bun
+Report your final status clearly at the end.
+
+REFERENCE SKILL DOCUMENT:
+${skillText}
+            `.trim(),
+            ...(OPENCLAW_PROVIDER ? { provider: OPENCLAW_PROVIDER } : {}),
+            ...(OPENCLAW_MODEL ? { model: OPENCLAW_MODEL } : {}),
+            lane: "immunizer",
+            timeoutMs: OPENCLAW_TIMEOUT_MS,
+            runId: `immunizer-${skill.vuln_id}-${Date.now()}`,
+            execOverrides: { host: "node", security: "full", ask: "off" },
+            bashElevated: { enabled: true, allowed: true, defaultLevel: "full" },
+            onBlockReply: async (payload: { text: string }) => {
+                summary += payload.text + '\n';
+                if (/VULNERABILITY CONFIRMED/i.test(payload.text)) {
+                    vulnerabilityFound = true;
+                }
+            },
+        });
+    } catch (e: any) {
+        console.error(`[ERROR] OpenClaw execution failed for ${skill.vuln_id}:`, e);
+        summary = `OpenClaw execution failed: ${e.message || e}`;
+        vulnerabilityFound = false;
+    }
 
     return { vulnerabilityFound, summary: summary.trim() };
 }
@@ -291,21 +304,32 @@ async function handleThreat(event: {
     fs.mkdirSync(workspaceDir, { recursive: true });
     fs.writeFileSync(path.join(workspaceDir, 'skill.md'), skillText);
 
-    // 4. Run via OpenClaw AI
-    console.log('🤖 Dispatching to OpenClaw AI agent...');
-    const { vulnerabilityFound, summary } = await executeSkillWithAI(skillText, vuln_id, workspaceDir);
+    // 4. Run via OpenClaw AI (Optional Decoupled Flow)
+    if (OPENCLAW_AUTO_EXECUTE) {
+        console.log('🤖 Dispatching to OpenClaw AI agent...');
+        const { vulnerabilityFound, summary } = await executeSkillWithAI(event, skillText, workspaceDir);
 
-    // 5. Log result
-    const status = vulnerabilityFound
-        ? '🛡️  VULNERABILITY CONFIRMED AND PATCHED'
-        : '✅  SYSTEM HEALTHY — No further action needed';
-    console.log(`\n${status}`);
-    console.log(summary);
+        // 5. Log result
+        const status = vulnerabilityFound
+            ? '🛡️  VULNERABILITY CONFIRMED AND PATCHED'
+            : '✅  SYSTEM HEALTHY — No further action needed';
+        console.log(`\n${status}`);
+        console.log(summary);
 
-    // 6. Report on-chain
-    console.log('⛓️  Writing immunization result to Sui...');
-    await notifyComplete(vuln_id, vulnerabilityFound, summary);
+        // 6. Report on-chain
+        console.log('⛓️  Writing immunization result to Sui...');
+        await notifyComplete(vuln_id, vulnerabilityFound, summary);
+    } else {
+        console.log('📦 FETCHER MODE: Skill saved to directory. Please watch them.');
+        console.log(`📍 Path: ${path.join(workspaceDir, 'skill.md')}`);
 
+        // Report "Awaiting Execution" on-chain
+        await notifyComplete(
+            vuln_id,
+            false,
+            'Fetcher: Intelligence staged. Awaiting independent execution.'
+        );
+    }
     // 7. Mark done
     fs.writeFileSync(doneFile, new Date().toISOString());
     console.log(`💉 Immunization complete for ${vuln_id}`);
@@ -353,9 +377,10 @@ async function main() {
     console.log('💉 Sui-Immunizer Agent (OpenClaw Edition) starting...');
     console.log(`📍 Sui Address : ${address}`);
     console.log(`🌐 Network     : ${SUI_NETWORK}`);
-    console.log(`📁 Workspace   : ${OPENCLAW_WORKSPACE}`);
+    const resolvedWorkspace = path.resolve(OPENCLAW_WORKSPACE);
+    console.log(`📁 Workspace   : ${resolvedWorkspace}`);
 
-    fs.mkdirSync(OPENCLAW_WORKSPACE, { recursive: true });
+    fs.mkdirSync(resolvedWorkspace, { recursive: true });
 
     await scanAndImmunize();
     console.log('🏁 Execution cycle complete. Exiting.');
